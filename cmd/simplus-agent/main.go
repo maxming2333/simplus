@@ -84,6 +84,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	devRoot := flags.String("dev-root", "/dev", "device-node root")
 	identityKeyPath := flags.String("identity-key", os.Getenv("SIMPLUS_AGENT_IDENTITY_KEY"), "absolute path to the Agent SIM identity pseudonym key")
 	stateRoot := flags.String("state-root", os.Getenv("SIMPLUS_AGENT_STATE_ROOT"), "required private Agent state root for durable hardware operations")
+	remoteATConfigPath := flags.String("remote-at-config", os.Getenv("SIMPLUS_AGENT_REMOTE_AT_CONFIG"), "optional absolute path to the private remote AT bridge configuration; empty disables bridged control endpoints")
 	directoryMode := &octalMode{value: 0o700}
 	socketMode := &octalMode{value: 0o600}
 	flags.Var(directoryMode, "directory-mode", "agent socket directory mode in octal")
@@ -125,6 +126,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if *identityKeyPath == "" || *stateRoot == "" || !filepath.IsAbs(*stateRoot) || filepath.Clean(*stateRoot) != *stateRoot || *stateRoot == string(filepath.Separator) {
 		fmt.Fprintln(stderr, "identity-key and an absolute non-root state-root are required")
+		return 2
+	}
+	if *remoteATConfigPath != "" && (!filepath.IsAbs(*remoteATConfigPath) || filepath.Clean(*remoteATConfigPath) != *remoteATConfigPath) {
+		fmt.Fprintln(stderr, "remote-at-config must be an absolute cleaned path")
 		return 2
 	}
 
@@ -178,6 +183,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	scanner.Adapters = registry
 	scanner.Identities = identityKeyring
 	scanner.Querier = hardwareprobe.NewATQuerierWithIdentity(identityKeyring)
+	if *remoteATConfigPath != "" {
+		if err := attachRemoteATBridges(scanner, registry, identityKeyring, *remoteATConfigPath, logger); err != nil {
+			closeState()
+			logger.Error("remote AT bridge initialization failed", "error", err)
+			return 1
+		}
+	}
 	monitor := agentapi.NewMonitor(scanner)
 	scanner.CurrentSnapshot = monitor.Snapshot
 	if _, err := monitor.Refresh(ctx); err != nil {
