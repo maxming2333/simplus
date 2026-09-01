@@ -72,6 +72,7 @@ func TestContainerReleaseBundleIsDeterministicAndAllowlisted(t *testing.T) {
 		bundleName + "/THIRD_PARTY_NOTICES.md":    0o644,
 		bundleName + "/VERSION":                   0o644,
 		bundleName + "/check-container-host.sh":   0o755,
+		bundleName + "/compose.remote-at.yaml":    0o644,
 		bundleName + "/compose.yaml":              0o644,
 		bundleName + "/prepare-container-host.sh": 0o755,
 	}
@@ -105,6 +106,22 @@ func TestContainerReleaseBundleIsDeterministicAndAllowlisted(t *testing.T) {
 		if strings.Contains(composeBody, forbidden) {
 			t.Fatalf("release Compose contains forbidden development input %q", forbidden)
 		}
+	}
+	// The remote AT overlay ships so an administrator can enable a bridged modem
+	// without the source tree, but it must stay a separate opt-in file: the base
+	// Compose keeps the Agent isolated and carries no image tag of its own.
+	overlayBody := string(files[bundleName+"/compose.remote-at.yaml"])
+	if !strings.Contains(overlayBody, "network_mode: bridge") ||
+		!strings.Contains(overlayBody, "SIMPLUS_AGENT_REMOTE_AT_CONFIG") {
+		t.Fatalf("release remote AT overlay = %q", overlayBody)
+	}
+	for _, forbidden := range []string{"image:", "SIMPLUS_IMAGE_TAG", "network_mode: host", "privileged: true"} {
+		if strings.Contains(overlayBody, forbidden) {
+			t.Fatalf("release remote AT overlay contains forbidden content %q", forbidden)
+		}
+	}
+	if strings.Contains(composeBody, "SIMPLUS_AGENT_REMOTE_AT_CONFIG") {
+		t.Fatal("release Compose must not enable the remote AT bridge path by default")
 	}
 	var compose composeFile
 	decoder := yaml.NewDecoder(strings.NewReader(composeBody))

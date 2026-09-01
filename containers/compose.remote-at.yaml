@@ -1,0 +1,43 @@
+# Optional overlay: let simplus-agent additionally drive a modem reached over a
+# remote AT bridge on the local network.
+#
+# The base compose.yaml keeps the Agent on `network_mode: none`. That isolation
+# is a deliberate contract, so reaching a bridge on the LAN is not enabled by
+# default: this overlay must be named explicitly.
+#
+#   docker compose -f compose.yaml -f containers/compose.remote-at.yaml up -d
+#
+# What it changes, and nothing else:
+#   1. The Agent gets the default Docker bridge network so it can reach the
+#      bridge host. This widens Agent egress from "none" to "whatever the host
+#      bridge can route". Prefer a bridge on an isolated management VLAN.
+#   2. One read-only bind delivers the private bridge configuration.
+#   3. One environment variable points the Agent at that file.
+#
+# It adds no capability, no device, no writable mount, no host networking, and
+# no privileged mode.
+#
+# Before starting, create the configuration on the host with owner UID 10002
+# (the Agent's runtime user) and mode 0600. The Agent refuses a symlink or a
+# group/world-accessible file:
+#
+#   install -o 10002 -g 10002 -m 0600 /dev/null ./data/agent-remote-at.json
+#   # then write the JSON document described in docs/remote-at-bridge.md
+#
+# Capability evidence: a bridged control path has no Simplus bounded HIL
+# evidence, so by default the device appears in inventory but exposes no
+# operable capability. Setting "attestCapabilities": true is an operator
+# attestation, not evidence. See docs/compatibility.md.
+
+services:
+  agent:
+    network_mode: bridge
+    environment:
+      SIMPLUS_AGENT_REMOTE_AT_CONFIG: /etc/simplus/remote-at.json
+    volumes:
+      - type: bind
+        source: ./data/agent-remote-at.json
+        target: /etc/simplus/remote-at.json
+        read_only: true
+        bind:
+          create_host_path: false

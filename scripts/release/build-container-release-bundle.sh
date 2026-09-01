@@ -60,6 +60,7 @@ actual_images=$(sed -n 's/^    image: //p' "$bundle_root/compose.yaml")
 ! grep -Fq "$image_placeholder" "$bundle_root/compose.yaml" || fail 'rendered Compose still contains the development image placeholder'
 ! grep -Eq '(^|[[:space:]])build:|:latest([[:space:]]|$)' "$bundle_root/compose.yaml" || fail 'rendered Compose contains a build directive or latest tag'
 
+install -m 0644 "$repository_root/containers/compose.remote-at.yaml" "$bundle_root/compose.remote-at.yaml"
 install -m 0644 "$repository_root/packaging/container/.env.example" "$bundle_root/.env.example"
 install -m 0644 "$repository_root/packaging/container/README.md" "$bundle_root/README.md"
 install -m 0755 "$repository_root/scripts/release/prepare-container-host.sh" "$bundle_root/prepare-container-host.sh"
@@ -73,7 +74,7 @@ chmod 0644 "$bundle_root/compose.yaml" "$bundle_root/VERSION"
 actual_files=$(find "$bundle_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
 expected_files=$(printf '%s\n' \
   .env.example LICENSE README.md THIRD_PARTY_NOTICES.md VERSION \
-  check-container-host.sh compose.yaml prepare-container-host.sh | LC_ALL=C sort)
+  check-container-host.sh compose.remote-at.yaml compose.yaml prepare-container-host.sh | LC_ALL=C sort)
 [[ $actual_files == "$expected_files" ]] || fail 'bundle staging directory does not match the public file allowlist'
 
 tar --sort=name --format=ustar --mtime="@$source_date_epoch" \
