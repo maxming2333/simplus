@@ -47,7 +47,7 @@ POST {base}/at/command
 
 契约要点：
 
-- `command` 长度 1..1024 字节，且不含 CR/LF。Agent 在发出请求前就会拒绝越界命令，桥应做同样校验；
+- `command` 长度 1..1024 字节，且不含 CR/LF。Agent 在发出请求前就会拒绝越界命令，桥应做同样校验。桥可以有更小的上限（参考固件受串口命令缓冲限制为 575 字节，足够容纳最长的 APDU 透传命令），但**必须拒绝而不是截断**：截断后的 AT 命令可能正好是另一条合法命令；
 - 桥负责补 `\r`、读取到终止状态、按行拆分。终止状态是 `OK`、`ERROR`、`+CME ERROR:` 前缀或 `+CMS ERROR:` 前缀之一；
 - `timeoutMs` 是桥等待终止状态的预算。超时应返回 `504`，不要返回一个没有终止状态的 `200`：Agent 会把缺少终止状态的 `200` 判为失败；
 - token 不匹配当前会话时返回 `404` 或 `410`，不要服务该命令。这正是 SIM AKA 依赖的隔离；
@@ -107,6 +107,14 @@ Agent 通过 `-remote-at-config` 或 `SIMPLUS_AGENT_REMOTE_AT_CONFIG` 读取一�
 - 探测本身不受影响。运维可以先确认桥可达、SIM READY、注册状态，再决定是否背书。
 
 `"attestCapabilities": true` 保留 adapter 的原始状态，并在每条 `observed` 证据末尾追加「operator-attested remote bridge」。这是运维背书，不是证据；Agent 启动时会为每个被背书的桥打印一条告警。这是 `.trellis/spec/core/backend/application-boundaries.md` 型号隔离规则所要求的「记录明确例外」。
+
+## 参考实现与已验证范围
+
+参考桥固件是 [esp32-sms-forwarding](https://github.com/maxming2333/esp32-sms-forwarding) 的 `/at/session`、`/at/command` 端点。它在会话期间拒绝自身网页调试入口（`GET /at`、`POST /ping`）的 AT 注入，因为那两条路径可以插入任意命令或直接独占串口。
+
+已在真机验证（读)：一枚 ML307A-DSLN-MTSH1S00 经桥完成完整只读综合探测——`state=complete`、型号/IMEI 指纹、SIM present+ready、SIM 身份指纹与归属 MCC-MNC、CSQ 信号与三域注册状态；以及 `AT+CCHO` → `AT+CGLA` → `AT+CCHC` 的完整粘性逻辑通道序列，关闭后通道号可被重新分配。会话独占、陈旧 token 拒绝、命令越界拒绝、TTL 自动回收均按契约表现。仍未验证的部分见 [`compatibility.md`](compatibility.md)。
+
+可重放这份证据的入口是 `internal/hardwareprobe` 里的 opt-in 探测测试，通过 `SIMPLUS_REMOTE_AT_HIL_CONFIG` 指向私有桥配置启用。它只执行只读计划，不做任何写入、射频变更或 SIM 变更。
 
 ## 部署
 

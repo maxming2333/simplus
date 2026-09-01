@@ -33,9 +33,12 @@
 | 桥设备合成、能力降级策略、SIM 鉴权 fail closed | Fixture |
 | 配置校验（文件权限、符号链接、URL 形态、profile 解析、重复 key） | Fixture |
 | Compose 叠加只放宽网络且不增加特权 | Fixture |
-| 与真实桥固件的端到端纵切 | 尚未验证 |
+| 经真实桥固件的只读综合探测（型号/IMEI 指纹、SIM present+ready、SIM 身份指纹与归属 MCC-MNC、CSQ、三域注册状态） | HIL-0 |
+| 经真实桥固件的逻辑通道粘性序列（通道打开 → APDU 交换 → 关闭，关闭后通道可重新分配） | HIL-0 |
 
-尚未验证的部分包括：真实桥固件互通、长时间会话稳定性、桥重启或掉线后的恢复行为、经桥完成的 SIM AKA 与 Host VoWiFi、经桥的短信收发。
+HIL-0 证据取自一枚 ML307A-DSLN-MTSH1S00 与一台参考 ESP32 桥固件，可通过 `SIMPLUS_REMOTE_AT_HIL_CONFIG` 重放（只读，不含写入/射频/SIM 变更）。
+
+尚未验证的部分包括：长时间会话稳定性、桥重启或掉线后的恢复行为、经桥完成的完整 SIM AKA 鉴权与 Host VoWiFi 接入、经桥的短信收发、多桥并发。
 
 能力证据规则：型号 adapter 的 `observed` 来自本机直连模组的受控 HIL，不迁移到第三方桥。默认策略把桥设备上所有 `observed` 降级为 `unverified`，因此桥设备只作为物理设备出现，不产生 modem function、SIM 卡槽或 Line，SIM 鉴权返回 `SIM_AKA_UNSUPPORTED`；探测不受影响。配置项 `attestCapabilities` 保留 adapter 状态并在证据文本中标注 operator-attested，这是运维背书而非验证证据，属于记录在案的显式例外。契约细节见 [`remote-at-bridge.md`](remote-at-bridge.md)。
 
