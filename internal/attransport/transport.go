@@ -34,6 +34,14 @@ type OpenError struct {
 	cause     error
 }
 
+// NewOpenError builds a classified open failure for an out-of-package Opener
+// implementation. The cause stays unexported so a transport cannot leak an
+// endpoint path, bridge URL or credential through Error(); it is reachable only
+// through errors.Unwrap by a caller that already owns the transport.
+func NewOpenError(kind string, retryable bool, cause error) *OpenError {
+	return &OpenError{Kind: kind, Retryable: retryable, cause: cause}
+}
+
 func (err *OpenError) Error() string { return "AT endpoint is unavailable" }
 
 func (err *OpenError) Unwrap() error { return err.cause }
