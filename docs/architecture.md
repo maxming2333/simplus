@@ -85,6 +85,8 @@ Line 也不是扫描结果。管理员只能从已添加模组当前可确认的
 
 AT 实现进一步分成三层：`internal/attransport` 只负责 Linux tty 的打开、独占锁、termios、有限长度读写、超时、终止响应识别和关闭，不包含任何型号命令或厂商解析；`internal/modemadapter/standardat` 提供只有型号 adapter 明确选择后才执行的标准 3GPP 只读计划与类型化解析；具体型号 adapter 拥有命令选择、厂商响应、身份查询、SIM/APDU/IMS 和 RF 动作。`hardwareprobe` 只打开一个有界 session 并把 `Query` 委托给对应能力，不能构造 AT 命令。需要 prompt/PDU 等不同交互语义的业务 driver 可以拥有专用 transport，但同样由 driver 决定命令，transport 只处理帧与 I/O。
 
+控制 transport 因此可以有第二个实现，而不影响上层。`internal/atremote` 用 HTTP 实现同一个 `attransport.Opener`/`Session` 契约，目标是一台独占持有模组 AT 串口的远程桥；它复刻本机 tty 的全部边界（命令 1024 字节、响应 8192 字节、必须出现终止状态、剥离回显与控制字符），把失败归入既有的 `OpenError` 分类，并且不含任何 AT 字面量。会话粘性由桥下发的 session token 表达，因为 SIM AKA 的逻辑通道开/APDU/关必须落在同一条串口会话上。装配点是 `cmd/simplus-agent`：它按控制端点定位符前缀确定性地路由，带桥前缀走 HTTP、其余走本机 tty，选中的 transport 失败即返回错误，绝不回退到另一条。定位符只出现在 `agentapi.Endpoint.Node`（本机模组在同一字段放 `/dev/ttyUSB2`），不携带 host、端口或凭据，且有源码扫描测试保证除 transport 与装配点外无任何包引用该前缀——上层无法区分本机与桥接。桥设备由 `hardwareprobe.Scanner.ExtraDevices` 合成为普通 `DeviceReport`，其 interface number 通过询问 adapter 得到而非硬编码；由于桥没有受控 HIL 证据，默认把所有 `observed` 能力降级为 `unverified`，因此桥设备可探测但不产生 modem function、Line 或 SIM 鉴权，只有运维显式背书才保留 adapter 证据并记录为明确例外。契约与部署叠加见 [`remote-at-bridge.md`](remote-at-bridge.md)。
+
 #### 分层控制与型号解耦
 
 每个控制层只能依赖下一级公开的类型化能力契约，不能依赖其具体型号或实现。依赖方向固定为：

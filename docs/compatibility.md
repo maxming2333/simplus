@@ -23,6 +23,24 @@
 
 两个型号共用同一个 Agent 协议、adapter registry、Modem/Line 领域模型和 Web/API；差异只位于经过证据约束的型号 adapter，不包装成两套平台。
 
+## 远程 AT 桥接控制路径
+
+`internal/atremote` 让 Agent 通过 HTTP 驱动一台独占持有模组 AT 串口的远程桥。当前证据等级：
+
+| 项目 | 等级 |
+| --- | --- |
+| transport 边界（命令/响应长度、终止状态、行规范化、`OpenError` 分类、会话粘性、无回退路由、凭据不入错误文本） | Fixture |
+| 桥设备合成、能力降级策略、SIM 鉴权 fail closed | Fixture |
+| 配置校验（文件权限、符号链接、URL 形态、profile 解析、重复 key） | Fixture |
+| Compose 叠加只放宽网络且不增加特权 | Fixture |
+| 与真实桥固件的端到端纵切 | 尚未验证 |
+
+尚未验证的部分包括：真实桥固件互通、长时间会话稳定性、桥重启或掉线后的恢复行为、经桥完成的 SIM AKA 与 Host VoWiFi、经桥的短信收发。
+
+能力证据规则：型号 adapter 的 `observed` 来自本机直连模组的受控 HIL，不迁移到第三方桥。默认策略把桥设备上所有 `observed` 降级为 `unverified`，因此桥设备只作为物理设备出现，不产生 modem function、SIM 卡槽或 Line，SIM 鉴权返回 `SIM_AKA_UNSUPPORTED`；探测不受影响。配置项 `attestCapabilities` 保留 adapter 状态并在证据文本中标注 operator-attested，这是运维背书而非验证证据，属于记录在案的显式例外。契约细节见 [`remote-at-bridge.md`](remote-at-bridge.md)。
+
+拥有专用 driver transport 的型号（例如 QDC507 的原生 SMS transport）不能经由本路径发布：该 driver 自带 transport，本 seam 无法提供，合成设备会在构造阶段被拒绝。
+
 ## Mihomo 专用出口
 
 已经验证：

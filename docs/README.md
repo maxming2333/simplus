@@ -13,6 +13,7 @@
 | [`development.md`](development.md) | 通用 Linux 本地开发、测试和受控 HIL 命令 | 操作指南 |
 | [`installation.md`](installation.md) | Docker Compose 生产部署、宿主准备和生命周期 | 操作指南 |
 | [`compatibility.md`](compatibility.md) | 公开兼容性结论和证据等级 | 参考证据 |
+| [`remote-at-bridge.md`](remote-at-bridge.md) | 远程 AT 桥 HTTP 契约、配置与能力证据例外 | 规范性 |
 | [`troubleshooting.md`](troubleshooting.md) | 不包含私人现场信息的稳定错误码和复查顺序 | 操作指南 |
 | [`privacy-and-publication.md`](privacy-and-publication.md) | 公开/私有记录边界和发布前检查 | 规范性 |
 | [`decisions/`](decisions/) | 影响产品范围或架构的重要决策 | 决策记录 |
@@ -24,6 +25,7 @@
 - 开始功能实现：读 `plans/active/mvp.md` 和 `handoff.zh-CN.md`；
 - 启动、测试或连接真实硬件：读 `development.md`；
 - 判断某项能力是否真实验证：读 `compatibility.md`；
+- 实现或接入远程 AT 桥固件：读 `remote-at-bridge.md`；
 - 排查正式运行态：读 `troubleshooting.md`；
 - 准备提交、发布或公开仓库：读 `privacy-and-publication.md`。
 
