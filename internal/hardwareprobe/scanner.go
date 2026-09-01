@@ -37,6 +37,13 @@ type Scanner struct {
 
 	Gate            *OperationGate
 	CurrentSnapshot func() agentapi.Snapshot
+
+	// ExtraDevices contributes reviewed devices that are not discoverable
+	// through USB sysfs, such as a modem reached over a remote control bridge.
+	// It is nil by default, in which case Scan behaves exactly as USB-only
+	// discovery. Contributed reports must be deterministic: agentapi.Monitor
+	// derives snapshot revisions and per-device generations from report content.
+	ExtraDevices func(context.Context) ([]agentapi.DeviceReport, error)
 }
 
 func (scanner *Scanner) readSMSBlockingCallCount(
@@ -62,7 +69,33 @@ func (scanner *Scanner) Scan(ctx context.Context) ([]agentapi.DeviceReport, erro
 	if scanner == nil {
 		return nil, errors.New("hardware scanner roots must be absolute")
 	}
-	return scanHardware(ctx, scanner.USBRoot, scanner.DevRoot, scanner.adapterRegistry(), scanner.Identities)
+	devices, err := scanHardware(ctx, scanner.USBRoot, scanner.DevRoot, scanner.adapterRegistry(), scanner.Identities)
+	if err != nil {
+		return nil, err
+	}
+	if scanner.ExtraDevices == nil {
+		return devices, nil
+	}
+	extra, err := scanner.ExtraDevices(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read contributed devices: %w", err)
+	}
+	known := make(map[string]bool, len(devices)+len(extra))
+	for _, device := range devices {
+		known[device.ID] = true
+	}
+	for _, device := range extra {
+		if device.ID == "" {
+			return nil, errors.New("contributed device is missing a stable identity")
+		}
+		if known[device.ID] {
+			return nil, fmt.Errorf("contributed device %q collides with a discovered device", device.ID)
+		}
+		known[device.ID] = true
+		devices = append(devices, device)
+	}
+	sort.Slice(devices, func(left, right int) bool { return devices[left].ID < devices[right].ID })
+	return devices, nil
 }
 
 func scanHardware(ctx context.Context, usbRoot, devRoot string, registry *modemadapter.Registry, identities IdentityPseudonymizer) ([]agentapi.DeviceReport, error) {

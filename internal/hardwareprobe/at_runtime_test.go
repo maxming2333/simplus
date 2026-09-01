@@ -202,3 +202,40 @@ func TestATRuntimeMapsUnsupportedTransportWithoutIssuingAdapterCommands(t *testi
 		t.Fatalf("probe = %#v", probe)
 	}
 }
+
+// TestNewATQuerierWithOpenerUsesTheInjectedTransport proves the composition
+// root, not this package, owns transport selection. The endpoint is opaque here:
+// the querier passes it through unchanged and never inspects its shape.
+func TestNewATQuerierWithOpenerUsesTheInjectedTransport(t *testing.T) {
+	session := &scriptedATSession{query: func(_ context.Context, command string, _ time.Duration) ([]string, error) {
+		if command == "AT+CPIN?" {
+			return []string{"+CPIN: READY", "OK"}, nil
+		}
+		return []string{"OK"}, nil
+	}}
+	opener := &scriptedATOpener{session: session}
+	querier := NewATQuerierWithOpener(opener, deterministicPseudonymizer{})
+
+	const opaqueEndpoint = "opaque-control-locator"
+	result := querier.Probe(context.Background(), opaqueEndpoint, modemadapter.ML307A{})
+	if opener.endpoint != opaqueEndpoint {
+		t.Fatalf("injected opener received %q, want the endpoint unchanged", opener.endpoint)
+	}
+	if result.Endpoint != opaqueEndpoint {
+		t.Fatalf("probe endpoint = %q", result.Endpoint)
+	}
+	if !session.closed {
+		t.Fatal("injected session was not closed")
+	}
+	if len(session.commands) == 0 {
+		t.Fatal("injected session received no adapter command")
+	}
+}
+
+func TestNewATQuerierWithOpenerFailsClosedWithoutATransport(t *testing.T) {
+	querier := NewATQuerierWithOpener(nil, deterministicPseudonymizer{})
+	result := querier.Probe(context.Background(), "opaque-control-locator", modemadapter.ML307A{})
+	if result.State != agentapi.ProbeStateUnavailable || result.ErrorCode != agentapi.ErrorPlatformUnsupported {
+		t.Fatalf("probe = %+v", result)
+	}
+}

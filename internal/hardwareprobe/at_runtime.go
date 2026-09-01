@@ -22,6 +22,17 @@ func NewATQuerierWithIdentity(pseudonymizer IdentityPseudonymizer) ModemQuerier 
 	return atRuntime{opener: attransport.NewOpener(), identities: pseudonymizer}
 }
 
+// NewATQuerierWithOpener uses a caller-supplied AT transport instead of the
+// platform tty opener. The composition root owns transport selection, so a
+// deployment can serve locally attached and bridged control endpoints from the
+// same Agent without this package learning which is which.
+//
+// A nil opener yields a querier that fails closed on every operation, matching
+// the existing unavailable-runtime behavior.
+func NewATQuerierWithOpener(opener attransport.Opener, pseudonymizer IdentityPseudonymizer) ModemQuerier {
+	return atRuntime{opener: opener, identities: pseudonymizer}
+}
+
 func (runtime atRuntime) Probe(ctx context.Context, endpoint string, adapter modemadapter.Adapter) agentapi.DeviceProbe {
 	result := emptyProbe(endpoint)
 	if runtime.opener == nil || adapter == nil {
