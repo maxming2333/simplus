@@ -23,6 +23,7 @@ func pseudonymizedICCID(lines []string, responsePrefix string, pseudonymizer Ide
 			continue
 		}
 		value := strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, responsePrefix)), `"`)
+		value = trimICCIDPadding(value)
 		if !iccidPattern.MatchString(value) {
 			return "", ""
 		}
@@ -33,6 +34,27 @@ func pseudonymizedICCID(lines []string, responsePrefix string, pseudonymizer Ide
 		return fingerprint, "ICCID •••• " + value[len(value)-4:]
 	}
 	return "", ""
+}
+
+// trimICCIDPadding removes the BCD pad nibble that EF_ICCID carries when the
+// ICCID has an odd digit count.
+//
+// EF_ICCID is 10 bytes, so it holds 20 BCD nibbles. An ITU-T E.118 identifier
+// shorter than that is padded with 'F' in the unused low nibbles, and a modem
+// that reports the field verbatim returns those pads. The pad is not part of the
+// identifier, so it is removed before validation and before pseudonymization:
+// keeping it would make one card's stable SIM fingerprint depend on whether its
+// digit count happened to be odd.
+//
+// Only trailing pads are removed. A value with an 'F' anywhere else is not a
+// padded identifier and stays invalid.
+func trimICCIDPadding(value string) string {
+	trimmed := strings.TrimRight(value, "Ff")
+	if len(value)-len(trimmed) > 2 {
+		// More pad nibbles than EF_ICCID can produce for a valid identifier.
+		return value
+	}
+	return trimmed
 }
 
 func equipmentIMEI(lines []string) string {
