@@ -1117,3 +1117,165 @@ Describe current assembly, not a planned universal platform:
 Tests or UI fixtures must not be used to advertise a real hardware capability.
 Update `docs/compatibility.md` only when the stated evidence level is actually
 met.
+
+
+## Scenario: Second control transport and bridged capability evidence
+
+### 1. Scope / Trigger
+
+Apply this contract when adding a control transport beside the Linux tty path,
+when publishing a device that USB sysfs cannot discover, or when capability
+evidence has to describe a control path that Simplus has not proven on real
+hardware.
+
+### 2. Signatures
+
+- Transport seam: `attransport.Opener.Open(string) (Session, error)` and
+  `Session.Query(context.Context, string, time.Duration) ([]string, error)`.
+- Out-of-package failure classification:
+  `attransport.NewOpenError(kind string, retryable bool, cause error)`. The
+  cause stays unexported so a transport cannot leak an endpoint path, URL or
+  credential through `Error()`.
+- Bridged transport: `internal/atremote` (`Target`, `NewTarget`, `NewOpener`,
+  `Locator`, `ParseLocator`, `NewRoutingOpener`, `LoadConfig`).
+- Injection points: `hardwareprobe.NewATQuerierWithOpener` and
+  `hardwareprobe.Scanner.ExtraDevices func(context.Context)
+  ([]agentapi.DeviceReport, error)`.
+- Device synthesis: `hardwareprobe.BridgeSpec` and
+  `hardwareprobe.NewBridgeDeviceSource(registry, specs, locator)`.
+
+### 3. Contracts
+
+Implement `attransport.Opener` rather than `hardwareprobe.ModemQuerier`. The
+Opener seam reuses `executeATProbe`'s identity/presence/serial ordering and
+every `modemadapter` method unchanged; reimplementing `ModemQuerier` duplicates
+that orchestration and lets the two paths drift.
+
+A second transport must reproduce the tty session's bounds exactly: command
+non-empty, at most `maximumCommandLength`, no CR/LF; response capped at
+`maximumResponseSize`; lines returned only once `HasTerminalResponse` holds;
+control characters, empty lines and the echoed command removed. If the two
+transports disagree on a bound, transport choice silently changes adapter
+behavior. `splitLines`/`safeText` are unexported and Linux-tagged, so a portable
+transport carries its own equivalent and pins parity with a test rather than
+exporting transport internals or dropping the build tag.
+
+Transport selection is deterministic routing on the endpoint locator, never
+fallback. `NewRoutingOpener` sends bridge-scheme locators to the bridged
+transport and everything else to the platform transport, and returns the
+selected transport's error unchanged. A locator whose scheme matches but whose
+key is malformed still routes to the bridged transport, which rejects it: making
+routing depend on key validity would let a typo reach the local tty path.
+
+The locator travels in `agentapi.Endpoint.Node`, the field that already carries
+`/dev/ttyUSB2`. It must carry no host, port, path or credential; those belong to
+the transport's reviewed target table. Prove the invariant with a source scan
+asserting the scheme constant is referenced only by the transport package and
+its composition root, so no application, API, protocol or adapter layer can
+branch on local versus bridged.
+
+Contributed devices must be deterministic and content-stable.
+`agentapi.Monitor` derives snapshot revisions and per-device generations from
+report content, so a source that varies between scans churns generations and
+invalidates queued operations. Build reports once, return copies, leave
+`Generation` zero, and use an identity namespace distinct from
+`stableDeviceID`'s `usb-`.
+
+Do not fabricate a USB descriptor for a device that has none, and do not
+hardcode a model's interface number in generic inventory code. Discover it by
+offering candidate interfaces to the adapter until it resolves the synthesized
+endpoint as its primary control role.
+
+Refuse to publish a profile whose adapter owns its own driver transport (for
+example `modemadapter.SMSAdapter`). Publishing it produces a device that looks
+operable and then fails inside a transport this seam does not provide.
+
+Capability evidence does not transfer across control paths. An adapter's
+`observed` statuses come from bounded HIL on a locally attached module, so a
+bridged device downgrades every `observed` entry to `EvidenceUnverified` with
+evidence naming the reason. That is fail-closed by construction:
+`inventory/agent_source.go` maps only `observed` evidence to business
+capabilities, and `hardwareprobe/simaka.go` refuses SIM authentication. Probing
+still works, so an operator can confirm reachability before deciding anything.
+An explicit per-bridge operator attestation may preserve the adapter statuses;
+it must append attestation text to each observed entry, be logged at startup,
+and be documented as attested rather than observed. This is the recorded
+exception required by [Model Isolation and Capability
+Evidence](#model-isolation-and-capability-evidence).
+
+Credentials for a remote peer come from a private file, not flags or
+environment values: a command line is readable by any local process through
+`/proc`. Require a regular non-symlink file with `mode & 0o077 == 0`, bound its
+size before decode, reject unknown JSON fields, and keep the host, credential
+and attempted URL out of every returned error.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| command empty, over the bound, or containing CR/LF | rejected before any I/O |
+| response over the size bound, or over the line-count bound | bounded error, no partial result |
+| response without a terminal status | error; never returned as success lines |
+| peer reports busy / auth failure / bad request / not implemented / anything else | `OpenBusy` retryable / `OpenPermission` / `OpenConfigure` retryable / `OpenUnsupported` / `OpenUnavailable` retryable |
+| unknown or malformed locator key | `OpenUnavailable`, not retryable, peer not contacted |
+| selected transport fails | error returned; the other transport is never attempted |
+| configured transport cannot be assembled | executable exits non-zero; never degrade to the other transport silently |
+| contributed device ID missing or colliding with a discovered device | `Scan` fails closed |
+| profile unknown, owning a driver transport, or accepting no synthesized endpoint | source construction fails |
+| bridged device without operator attestation | every capability at most `unverified`; SIM authentication returns `ErrSIMAKAUnsupported` |
+| configuration file group/world accessible, symlinked, oversize, or with unknown fields | load fails with a credential-safe error |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a bridged ML307A appears with a stable identity, probes to
+  `ProbeStateComplete` through the routing opener, and exposes no business
+  capability until an operator attests it.
+- Base: the bridge is unreachable. The device stays listed with a retryable
+  typed probe error, exactly like an unplugged tty endpoint; inventory does not
+  invent or delete business objects.
+- Bad: relax `filepath.IsAbs` in the tty session so one transport serves two
+  mechanisms; try the local opener when the bridged one fails; copy the
+  adapter's observed evidence onto a bridge; hardcode interface 2 in the device
+  source; put the bridge URL or credential in the locator or in an error string.
+
+### 6. Tests Required
+
+- Transport tests against a synthetic peer covering every status in the matrix,
+  the exact command and response bounds, line normalization, caller
+  cancellation, stale peer session, redirect refusal, and that `Error()` never
+  names the peer.
+- A routing test asserting both directions and, explicitly, that a failure on
+  one side never reaches the other.
+- Source scans: no command literal inside the transport, and the locator scheme
+  confined to the transport plus its composition root. Give the literal matcher
+  a positive/negative self-check so the scan cannot become vacuous.
+- Device-source tests for determinism, caller-mutation isolation, the adapter's
+  interface expectation across several numbers, and both evidence policies
+  including the SIM authentication gate.
+- Configuration tests for every rejected file and document shape, plus an
+  assertion that the error text carries no credential or host.
+- Optional real-peer evidence belongs in an env-guarded, read-only test that
+  fails closed on an unavailable probe state. It must issue no write, RF change
+  or SIM mutation.
+
+### 7. Wrong vs Correct
+
+Wrong: make availability decide the transport, and let the peer's identity leak
+into the failure:
+
+```go
+if session, err := bridge.Open(endpoint); err == nil {
+    return session, nil
+}
+return local.Open(endpoint) // silent transport switch
+```
+
+Correct: route on the locator and return the selected transport's classified
+failure:
+
+```go
+if atremote.IsLocator(endpoint) {
+    return bridge.Open(endpoint) // never falls through
+}
+return local.Open(endpoint)
+```

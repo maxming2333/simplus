@@ -52,6 +52,36 @@ Do not fix a mount, UID, AppArmor, kernel, or preflight failure by enabling
 `privileged`, host networking, a broad writable sysfs tree, all-device cgroup
 access, or an arbitrary command/path input.
 
+## Relaxing an Isolation Contract
+
+An optional feature that needs more than a service's current isolation goes in a
+separate Compose overlay, never in `compose.yaml`. `containers/compose.remote-at.yaml`
+is the reference shape: it is the only place that gives Agent a network, it
+delivers one read-only private configuration bind, it sets one environment
+variable, and it adds no capability, device, writable mount, host network or
+privileged mode.
+
+Keeping the relaxation in its own file means the default deployment stays
+isolated, the existing base-compose contract test keeps passing unchanged, and
+the widening is a named argument on the command line rather than an invisible
+default:
+
+```bash
+docker compose -f compose.yaml -f containers/compose.remote-at.yaml up -d
+```
+
+An overlay needs its own contract test asserting both halves: the overlay's
+exact shape, and that the base Compose still isolates the service and does not
+enable the feature. If administrators are expected to use the overlay in
+production, add it to the release bundle allowlist in
+`scripts/release/build-container-release-bundle.sh` and to the bundle test's
+mode map together; a feature that only works from the source tree is not a
+production feature.
+
+An overlay cannot introduce `networks:` on a service whose base sets
+`network_mode`, because Compose refuses the combination after merge. Replace the
+scalar instead.
+
 ## netd Ownership and Preflight
 
 `containers/netd-entrypoint.sh` validates private runtime/data mounts and runs

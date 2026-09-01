@@ -28,6 +28,16 @@ Tests live beside the package and prove the owning contract:
 - Storage tests reopen real files and old schemas. Do not replace
   `internal/storage/sqlite/store_test.go` upgrade/integrity cases with a mock
   database.
+- Architectural invariants that no type can express are asserted by source
+  scans. `internal/atremote/sourcescan_test.go` proves the transport contains no
+  AT command literal and that its endpoint-locator scheme is referenced only by
+  the transport and its composition root. Give every scan matcher a
+  positive/negative self-check inside the test: a scan whose regex silently
+  stops matching passes forever and proves nothing.
+- Optional real-hardware evidence belongs in an env-guarded test that skips by
+  default, exercises only read-only behavior, and fails closed on an unavailable
+  result. `internal/hardwareprobe/bridge_hil_test.go` is the reference shape; it
+  is reproducible evidence, not an ordinary test dependency.
 - Deployment shape is executable Go contract, not only YAML review:
   `internal/containercontract/contract_test.go` parses `compose.yaml` with
   known fields and checks privilege/mount/image invariants.
