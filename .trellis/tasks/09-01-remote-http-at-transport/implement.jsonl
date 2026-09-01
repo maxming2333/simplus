@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "internal/attransport/transport.go", "reason": "transport Session/Opener/OpenError contract the new HTTP transport must implement exactly"}
+{"file": ".trellis/spec/core/backend/application-boundaries.md", "reason": "model isolation, capability evidence, no silent transport switching, error contract"}
+{"file": ".trellis/spec/core/backend/directory-structure.md", "reason": "package ownership rules for the new internal/atremote package and hardwareprobe changes"}
+{"file": ".trellis/spec/core/backend/quality-and-testing.md", "reason": "trusted test patterns for the new transport and source tests"}
+{"file": ".trellis/spec/core/infra/containers-and-privileges.md", "reason": "agent network_mode none invariant and override-file requirement"}
