@@ -131,6 +131,31 @@ Agent 通过 `-remote-at-config` 或 `SIMPLUS_AGENT_REMOTE_AT_CONFIG` 读取一�
 
 文件必须是常规文件、非符号链接、模式不含 group/other 位（例如 `0600`），大小不超过 64 KiB。任一条不满足即启动失败。缺少该配置时 Agent 行为与不带此功能完全一致。
 
+### 为什么不在网页上填
+
+USB 路径**没有任何设备级配置**——内核枚举出设备，插上即出现。网页上为 USB 设备配置的是
+业务意图（从候选「添加模组」、从 SIM/Profile 候选「添加 Line」，只填显示名），桥在这一层
+与它完全一致。差异只在「设备存在」这一层，而桥没有总线可枚举，只能由人断言，这属于硬件
+事实而非业务意图。
+
+把地址与凭据放进 Web 会让网页调用方间接决定 AT 命令的去向，破坏 `attransport.Query` 只对
+编译进来的型号 adapter 可见这条不变量；`simplusd` 也按容器隔离契约本就写不到 Agent 的私有
+状态。完整理由与将来若要开放网页写入的前置条件见
+[`decisions/0028`](decisions/0028-remote-at-bridge-configuration-ownership.md)。
+
+只读可见性由已有渠道提供，不新增 Web 面：
+
+```bash
+# Agent 启动日志：每个桥一条 key/profile/host，明文与背书各一条告警
+docker compose logs agent | grep -i bridge
+
+# 桥设备出现在清单里；VID:PID 为空本身就是「非 USB 控制路径」的诚实信号
+simplusctl health agent
+# - China Mobile IoT ML307A (esp32-a :): complete
+```
+
+改一个桥 = 改文件 + `docker compose ... restart agent`。
+
 明文 `http` 是允许的（局域网部署是预期形态），但 Agent 会在启动时打印一条告警：AT 流量与桥凭据在传输中不具备保密性。
 
 ## 能力证据与显式例外
