@@ -37,8 +37,9 @@ const (
 )
 
 // reservedHeaders may not be supplied by configuration: they either frame the
-// request body or are hop-by-hop, so overriding them would change what the
-// bridge receives rather than how it authenticates.
+// request body or are hop-by-hop, so overriding them would change what the bridge
+// receives rather than how it authenticates. Authorization is deliberately not
+// among them — it is the ordinary way to authenticate a bridge.
 var reservedHeaders = map[string]bool{
 	"host": true, "content-type": true, "content-length": true, "accept": true,
 	"connection": true, "transfer-encoding": true, "expect": true, "upgrade": true,
@@ -53,9 +54,7 @@ var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,128}$`)
 // assembled in cmd/simplus-agent from a private configuration file; no Web, API
 // or application caller can supply or observe one.
 type Target struct {
-	Key      string
-	Username string
-	Password string
+	Key string
 
 	// RequestTimeout bounds opening and closing a conversation.
 	RequestTimeout time.Duration
@@ -74,18 +73,26 @@ type Target struct {
 	// neither be read nor drained.
 	ResponseSize int
 
-	// Headers are additional request headers, for a bridge that authenticates
-	// with something other than HTTP Basic. Hop-by-hop and body-framing headers
-	// are rejected so a header cannot rewrite the request shape.
-	Headers map[string]string
+	// headers carry every request header this bridge needs, including whatever
+	// authenticates it. There is deliberately no separate credential field: a user
+	// name and password are one particular scheme's encoding of an Authorization
+	// header, and modelling that one scheme specially bought nothing while
+	// requiring a precedence rule between the two mechanisms and excluding every
+	// bridge that authenticates some other way.
+	//
+	// Unexported for the same reason baseURL is: this is where the credential
+	// lives, so merely holding a Target must not be enough to read it.
+	// Hop-by-hop and body-framing headers are rejected so a header cannot rewrite
+	// the request shape.
+	headers map[string]string
 
 	baseURL   string
 	plaintext bool
 }
 
-// BaseURLHost returns only the host part of the configured base URL, for
-// startup logging. The scheme, path and credentials are withheld so ordinary
-// logs never carry a bridge credential.
+// BaseURLHost returns only the host part of the configured base URL, for startup
+// logging. The scheme and path are withheld, and headers are never exposed at all,
+// so ordinary logs cannot carry a bridge credential.
 func (target Target) BaseURLHost() string {
 	parsed, err := url.Parse(target.baseURL)
 	if err != nil {
@@ -111,13 +118,13 @@ type TargetOptions struct {
 	Headers         map[string]string
 }
 
-func NewTarget(key, baseURL, username, password string, requestTimeout time.Duration) (Target, error) {
-	return NewTargetWithOptions(key, baseURL, username, password, TargetOptions{RequestTimeout: requestTimeout})
+func NewTarget(key, baseURL string, requestTimeout time.Duration) (Target, error) {
+	return NewTargetWithOptions(key, baseURL, TargetOptions{RequestTimeout: requestTimeout})
 }
 
 // NewTargetWithOptions validates one bridge definition including its optional
 // timeouts and headers.
-func NewTargetWithOptions(key, baseURL, username, password string, options TargetOptions) (Target, error) {
+func NewTargetWithOptions(key, baseURL string, options TargetOptions) (Target, error) {
 	if !ValidKey(key) {
 		return Target{}, fmt.Errorf("remote AT bridge key %q is invalid", key)
 	}
@@ -130,12 +137,6 @@ func NewTargetWithOptions(key, baseURL, username, password string, options Targe
 	}
 	if parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return Target{}, fmt.Errorf("remote AT bridge %q base URL must carry only a scheme, host and path", key)
-	}
-	if strings.Contains(username, ":") {
-		return Target{}, fmt.Errorf("remote AT bridge %q username must not contain a colon", key)
-	}
-	if (username == "") != (password == "") {
-		return Target{}, fmt.Errorf("remote AT bridge %q must set both or neither of username and password", key)
 	}
 	timeout := options.RequestTimeout
 	if timeout == 0 {
@@ -166,9 +167,9 @@ func NewTargetWithOptions(key, baseURL, username, password string, options Targe
 	}
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
 	return Target{
-		Key: key, Username: username, Password: password, RequestTimeout: timeout,
+		Key: key, RequestTimeout: timeout,
 		CommandTimeout: commandTimeout, ExchangeTimeout: exchangeTimeout,
-		ResponseSize: responseSize, Headers: headers,
+		ResponseSize: responseSize, headers: headers,
 		baseURL: parsed.Scheme + "://" + parsed.Host + parsed.Path, plaintext: parsed.Scheme == "http",
 	}, nil
 }

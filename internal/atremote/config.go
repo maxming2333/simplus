@@ -50,9 +50,15 @@ type configFile struct {
 }
 
 type configBridge struct {
-	Key                string            `json:"key"`
-	BaseURL            string            `json:"baseUrl"`
-	Profile            string            `json:"profile"`
+	Key     string `json:"key"`
+	BaseURL string `json:"baseUrl"`
+	Profile string `json:"profile"`
+
+	// Username and Password are accepted only to be refused with an explanation.
+	// Unknown fields are already rejected, so a configuration written for the
+	// earlier shape fails closed either way rather than quietly running with no
+	// credential; this exists so the operator is told where the credential moved
+	// instead of reading "unknown field".
 	Username           string            `json:"username"`
 	Password           string            `json:"password"`
 	RequestTimeoutMS   int64             `json:"requestTimeoutMs"`
@@ -127,6 +133,11 @@ func parseConfig(body []byte) (Config, error) {
 		if !profilePattern.MatchString(entry.Profile) {
 			return Config{}, fmt.Errorf("remote AT bridge %q has an invalid profile", entry.Key)
 		}
+		if entry.Username != "" || entry.Password != "" {
+			return Config{}, fmt.Errorf("remote AT bridge %q must carry its credential in \"headers\" "+
+				"(for HTTP Basic: {\"Authorization\": \"Basic <base64 of user:password>\"}); "+
+				"the separate username and password fields were removed", entry.Key)
+		}
 		if entry.RequestTimeoutMS < 0 || entry.RequestTimeoutMS > maximumRequestTimeout.Milliseconds() {
 			return Config{}, fmt.Errorf("remote AT bridge %q request timeout must be from 1000ms through 120000ms", entry.Key)
 		}
@@ -137,7 +148,7 @@ func parseConfig(body []byte) (Config, error) {
 				return Config{}, fmt.Errorf("remote AT bridge %q %s must be from 1000ms through 180000ms", entry.Key, label)
 			}
 		}
-		target, err := NewTargetWithOptions(entry.Key, entry.BaseURL, entry.Username, entry.Password, TargetOptions{
+		target, err := NewTargetWithOptions(entry.Key, entry.BaseURL, TargetOptions{
 			RequestTimeout:  time.Duration(entry.RequestTimeoutMS) * time.Millisecond,
 			CommandTimeout:  time.Duration(entry.CommandTimeoutMS) * time.Millisecond,
 			ExchangeTimeout: time.Duration(entry.ExchangeTimeoutMS) * time.Millisecond,

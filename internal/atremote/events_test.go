@@ -15,9 +15,12 @@ func bridgeOpener(t *testing.T, handler http.Handler) (*Opener, string) {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	target, err := NewTarget("bridge-a", server.URL, "operator", "secret", 5*time.Second)
+	target, err := NewTargetWithOptions("bridge-a", server.URL, TargetOptions{
+		RequestTimeout: 5 * time.Second,
+		Headers:        map[string]string{"Authorization": basicHeader("operator", "secret")},
+	})
 	if err != nil {
-		t.Fatalf("NewTarget: %v", err)
+		t.Fatalf("NewTargetWithOptions: %v", err)
 	}
 	opener, err := NewOpener([]Target{target})
 	if err != nil {
@@ -73,6 +76,7 @@ func TestCallEventsReadsTheRingAndCarriesTheCursorAndBound(t *testing.T) {
 	if query.Get("limit") != "32" {
 		t.Fatalf("limit = %q, want the validated ring size", query.Get("limit"))
 	}
+	// The credential arrives as a configured header, which is the only mechanism.
 	if user, password, ok := seen.BasicAuth(); !ok || user != "operator" || password != "secret" {
 		t.Fatal("the read did not carry the reviewed bridge credential")
 	}
@@ -172,7 +176,7 @@ func TestCallEventsBoundIsIndependentOfTheTranscriptCeiling(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(jsonHandler(validReport, nil))
 			t.Cleanup(server.Close)
-			target, err := NewTargetWithOptions("bridge-a", server.URL, "", "", TargetOptions{ResponseSize: size})
+			target, err := NewTargetWithOptions("bridge-a", server.URL, TargetOptions{ResponseSize: size})
 			if err != nil {
 				t.Fatalf("NewTargetWithOptions: %v", err)
 			}
@@ -191,7 +195,7 @@ func TestCallEventsBoundIsIndependentOfTheTranscriptCeiling(t *testing.T) {
 		_, _ = writer.Write([]byte(strings.Repeat("x", callEventsResponseSize+64)))
 	}))
 	t.Cleanup(server.Close)
-	target, err := NewTargetWithOptions("bridge-a", server.URL, "", "",
+	target, err := NewTargetWithOptions("bridge-a", server.URL,
 		TargetOptions{ResponseSize: maximumBridgeResponseSize})
 	if err != nil {
 		t.Fatalf("NewTargetWithOptions: %v", err)

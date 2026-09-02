@@ -24,7 +24,13 @@ func writeConfig(t *testing.T, body string, mode os.FileMode) string {
 	return path
 }
 
-const validConfig = `{"bridges":[{"key":"esp32-a","baseUrl":"http://192.0.2.10","profile":"ml307a","username":"agent","password":"secret","requestTimeoutMs":15000}]}`
+const validConfig = `{"bridges":[{"key":"esp32-a","baseUrl":"http://192.0.2.10","profile":"ml307a","requestTimeoutMs":15000}]}`
+
+// authenticatedConfig carries a credential the only way a bridge can: as a
+// request header. HTTP Basic has no special field, because it is one scheme's
+// encoding of exactly this header.
+const authenticatedConfig = `{"bridges":[{"key":"esp32-a","baseUrl":"http://192.0.2.10","profile":"ml307a",` +
+	`"headers":{"Authorization":"Basic YWdlbnQ6c2VjcmV0"},"requestTimeoutMs":15000}]}`
 
 func TestLoadConfigAcceptsPrivateBoundedFile(t *testing.T) {
 	config, err := LoadConfig(writeConfig(t, validConfig, 0o600))
@@ -91,9 +97,8 @@ func TestLoadConfigRejectsInvalidDefinitions(t *testing.T) {
 		{name: "userinfo", body: `{"bridges":[{"key":"a","baseUrl":"http://agent:secret@192.0.2.10","profile":"ml307a"}]}`},
 		{name: "query", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10/at?token=x","profile":"ml307a"}]}`},
 		{name: "fragment", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10/at#frag","profile":"ml307a"}]}`},
-		{name: "username without password", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","username":"agent"}]}`},
-		{name: "password without username", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","password":"secret"}]}`},
-		{name: "username with colon", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","username":"a:b","password":"c"}]}`},
+		{name: "removed username field", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","username":"agent","password":"c"}]}`},
+		{name: "removed password field", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","password":"secret"}]}`},
 		{name: "negative timeout", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","requestTimeoutMs":-1}]}`},
 		{name: "timeout below minimum", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","requestTimeoutMs":10}]}`},
 		{name: "timeout above maximum", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","requestTimeoutMs":600000}]}`},
@@ -163,7 +168,8 @@ func TestLoadConfigRejectsUnsafeFiles(t *testing.T) {
 }
 
 func TestLoadConfigErrorsWithholdCredentials(t *testing.T) {
-	_, err := LoadConfig(writeConfig(t, `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","username":"agent","password":"top-secret","requestTimeoutMs":5}]}`, 0o600))
+	_, err := LoadConfig(writeConfig(t, `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a",`+
+		`"headers":{"Authorization":"Bearer top-secret"},"requestTimeoutMs":5}]}`, 0o600))
 	if err == nil {
 		t.Fatal("LoadConfig accepted an invalid timeout")
 	}
@@ -181,7 +187,7 @@ func TestNewTargetRejectsUnbuiltTargetsInOpener(t *testing.T) {
 	if _, err := NewOpener(nil); err == nil {
 		t.Fatal("NewOpener accepted an empty target list")
 	}
-	target, err := NewTarget("a", "http://192.0.2.10", "", "", 0)
+	target, err := NewTarget("a", "http://192.0.2.10", 0)
 	if err != nil {
 		t.Fatalf("NewTarget: %v", err)
 	}
@@ -200,8 +206,8 @@ func TestLoadConfigCarriesTunableTransportOptions(t *testing.T) {
 	if target.CommandTimeout != 8*time.Second || target.ExchangeTimeout != 45*time.Second {
 		t.Fatalf("timeouts = %s / %s", target.CommandTimeout, target.ExchangeTimeout)
 	}
-	if target.Headers["X-Bridge-Token"] != "opaque" || len(target.Headers) != 1 {
-		t.Fatalf("headers = %#v", target.Headers)
+	if target.headers["X-Bridge-Token"] != "opaque" || len(target.headers) != 1 {
+		t.Fatalf("headers = %#v", target.headers)
 	}
 }
 
@@ -214,8 +220,8 @@ func TestLoadConfigDefaultsTunableTransportOptions(t *testing.T) {
 	if target.CommandTimeout != defaultCommandTimeout || target.ExchangeTimeout != defaultExchangeTimeout {
 		t.Fatalf("defaults = %s / %s", target.CommandTimeout, target.ExchangeTimeout)
 	}
-	if len(target.Headers) != 0 {
-		t.Fatalf("headers = %#v", target.Headers)
+	if len(target.headers) != 0 {
+		t.Fatalf("headers = %#v", target.headers)
 	}
 }
 
@@ -259,7 +265,7 @@ func TestLargeTranscriptFitsAnEnlargedCeiling(t *testing.T) {
 	server := httptest.NewServer(bridge.handler())
 	t.Cleanup(server.Close)
 
-	small, err := NewTargetWithOptions("a", server.URL, "", "", TargetOptions{RequestTimeout: 2 * time.Second})
+	small, err := NewTargetWithOptions("a", server.URL, TargetOptions{RequestTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatalf("NewTargetWithOptions: %v", err)
 	}
@@ -276,7 +282,7 @@ func TestLargeTranscriptFitsAnEnlargedCeiling(t *testing.T) {
 	}
 	session.Close()
 
-	large, err := NewTargetWithOptions("a", server.URL, "", "", TargetOptions{
+	large, err := NewTargetWithOptions("a", server.URL, TargetOptions{
 		RequestTimeout: 2 * time.Second, ResponseSize: 65536,
 	})
 	if err != nil {
@@ -297,5 +303,52 @@ func TestLargeTranscriptFitsAnEnlargedCeiling(t *testing.T) {
 	}
 	if len(lines) != 81 {
 		t.Fatalf("lines = %d, want 40 headers plus 40 PDUs plus OK", len(lines))
+	}
+}
+
+// TestLoadConfigCarriesTheCredentialOnlyInHeaders is the whole point of having one
+// mechanism: any scheme works without the transport knowing about it, and there is
+// no second credential path that could disagree with this one.
+func TestLoadConfigCarriesTheCredentialOnlyInHeaders(t *testing.T) {
+	for name, header := range map[string]string{
+		"basic":  `"Authorization":"Basic YWdlbnQ6c2VjcmV0"`,
+		"bearer": `"Authorization":"Bearer abc123"`,
+		"custom": `"X-Auth-Token":"abc123"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			config, err := LoadConfig(writeConfig(t,
+				`{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","headers":{`+header+`}}]}`, 0o600))
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if len(config.Bridges[0].Target.headers) != 1 {
+				t.Fatalf("headers = %#v", config.Bridges[0].Target.headers)
+			}
+		})
+	}
+	// A bridge with no authentication at all stays valid: it may sit behind a proxy
+	// that authenticates for it, and inventing a mandatory credential here would
+	// not make anything safer.
+	if _, err := LoadConfig(writeConfig(t, validConfig, 0o600)); err != nil {
+		t.Fatalf("an unauthenticated bridge was refused: %v", err)
+	}
+}
+
+// TestLoadConfigExplainsWhereTheCredentialMoved guards the migration. Unknown
+// fields are already refused, so an old configuration fails closed either way and
+// can never run unauthenticated by accident; this is about the operator being told
+// where to put the credential rather than reading "unknown field".
+func TestLoadConfigExplainsWhereTheCredentialMoved(t *testing.T) {
+	_, err := LoadConfig(writeConfig(t,
+		`{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","username":"agent","password":"secret"}]}`, 0o600))
+	if err == nil {
+		t.Fatal("a configuration using the removed credential fields was accepted")
+	}
+	if !strings.Contains(err.Error(), "headers") {
+		t.Fatalf("error does not say where the credential moved: %v", err)
+	}
+	// And it still must not echo the credential back.
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("migration error leaked the credential: %v", err)
 	}
 }

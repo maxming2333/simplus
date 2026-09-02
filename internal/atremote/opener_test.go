@@ -2,6 +2,7 @@ package atremote
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,13 +178,20 @@ func (bridge *fakeBridge) snapshot() fakeBridge {
 	}
 }
 
+// startBridge builds an opener for the fake bridge. Credentials, when the test
+// wants them, travel as an ordinary configured header — the same and only way a
+// deployment supplies them.
 func startBridge(t *testing.T, bridge *fakeBridge, username, password string) *Opener {
 	t.Helper()
 	server := httptest.NewServer(bridge.handler())
 	t.Cleanup(server.Close)
-	target, err := NewTarget("esp32-a", server.URL, username, password, 2*time.Second)
+	options := TargetOptions{RequestTimeout: 2 * time.Second}
+	if username != "" || password != "" {
+		options.Headers = map[string]string{"Authorization": basicHeader(username, password)}
+	}
+	target, err := NewTargetWithOptions("esp32-a", server.URL, options)
 	if err != nil {
-		t.Fatalf("NewTarget: %v", err)
+		t.Fatalf("NewTargetWithOptions: %v", err)
 	}
 	opener, err := NewOpener([]Target{target})
 	if err != nil {
@@ -497,7 +505,7 @@ func TestOpenRejectsUnreachableBridge(t *testing.T) {
 	server := httptest.NewServer(newFakeBridge().handler())
 	url := server.URL
 	server.Close()
-	target, err := NewTarget("esp32-a", url, "", "", time.Second)
+	target, err := NewTarget("esp32-a", url, time.Second)
 	if err != nil {
 		t.Fatalf("NewTarget: %v", err)
 	}
@@ -523,7 +531,7 @@ func TestOpenRejectsRedirectingBridge(t *testing.T) {
 		http.Redirect(writer, request, elsewhere.URL+sessionPath, http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(redirector.Close)
-	target, err := NewTarget("esp32-a", redirector.URL, "", "", time.Second)
+	target, err := NewTarget("esp32-a", redirector.URL, time.Second)
 	if err != nil {
 		t.Fatalf("NewTarget: %v", err)
 	}
@@ -556,7 +564,7 @@ func TestConfiguredHeadersAndCeilingsReachTheBridge(t *testing.T) {
 	bridge.recordHeaders = []string{"X-Bridge-Token", "Authorization"}
 	server := httptest.NewServer(bridge.handler())
 	t.Cleanup(server.Close)
-	target, err := NewTargetWithOptions("esp32-a", server.URL, "", "", TargetOptions{
+	target, err := NewTargetWithOptions("esp32-a", server.URL, TargetOptions{
 		RequestTimeout:  2 * time.Second,
 		CommandTimeout:  3 * time.Second,
 		ExchangeTimeout: 4 * time.Second,
@@ -616,7 +624,7 @@ func TestTargetRejectsUnsafeHeadersAndCeilings(t *testing.T) {
 		{name: "exchange timeout above bound", options: TargetOptions{ExchangeTimeout: time.Hour}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			if _, err := NewTargetWithOptions("a", "http://192.0.2.10", "", "", testCase.options); err == nil {
+			if _, err := NewTargetWithOptions("a", "http://192.0.2.10", testCase.options); err == nil {
 				t.Fatal("NewTargetWithOptions accepted an unsafe option")
 			}
 		})
@@ -625,7 +633,14 @@ func TestTargetRejectsUnsafeHeadersAndCeilings(t *testing.T) {
 	for index := 0; index <= maximumHeaderCount; index++ {
 		many[fmt.Sprintf("X-H%d", index)] = "v"
 	}
-	if _, err := NewTargetWithOptions("a", "http://192.0.2.10", "", "", TargetOptions{Headers: many}); err == nil {
+	if _, err := NewTargetWithOptions("a", "http://192.0.2.10", TargetOptions{Headers: many}); err == nil {
 		t.Fatal("NewTargetWithOptions accepted too many headers")
 	}
+}
+
+// basicHeader encodes HTTP Basic the way a deployment must: as the value of an
+// ordinary Authorization header. There is no separate credential mechanism to
+// exercise, which is the point of removing one.
+func basicHeader(username, password string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
 }

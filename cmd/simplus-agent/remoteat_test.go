@@ -54,7 +54,8 @@ func TestPlanATTransportWithoutConfigurationKeepsTheLocalPath(t *testing.T) {
 }
 
 func TestConfiguredBridgePublishesADeviceForItsModel(t *testing.T) {
-	path := writeBridgeConfig(t, `{"bridges":[{"key":"esp32-a","baseUrl":"http://bridge.invalid","profile":"ml307a","username":"agent","password":"secret"}]}`)
+	path := writeBridgeConfig(t, `{"bridges":[{"key":"esp32-a","baseUrl":"http://bridge.invalid","profile":"ml307a",`+
+		`"headers":{"Authorization":"Basic YWdlbnQ6c2VjcmV0"}}]}`)
 	plan, err := planATTransport(path)
 	if err != nil {
 		t.Fatalf("planATTransport: %v", err)
@@ -110,7 +111,7 @@ func TestPlanATTransportFailsClosed(t *testing.T) {
 		{name: "invalid url", body: `{"bridges":[{"key":"a","baseUrl":"mqtt://bridge.invalid","profile":"ml307a"}]}`},
 		{name: "no bridges", body: `{"bridges":[]}`},
 		{name: "duplicate key", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"ml307a"},{"key":"a","baseUrl":"http://other.invalid","profile":"ml307a"}]}`},
-		{name: "credentials half configured", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"ml307a","username":"agent"}]}`},
+		{name: "removed credential fields", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"ml307a","username":"agent"}]}`},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			if _, err := planATTransport(writeBridgeConfig(t, testCase.body)); err == nil {

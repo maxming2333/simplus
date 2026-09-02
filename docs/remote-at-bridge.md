@@ -180,8 +180,7 @@ Agent 通过 `-remote-at-config` 或 `SIMPLUS_AGENT_REMOTE_AT_CONFIG` 读取一�
       "key": "esp32-a",
       "baseUrl": "http://bridge.lan",
       "profile": "ml307a",
-      "username": "agent",
-      "password": "<bridge credential>",
+      "headers": { "Authorization": "Basic <base64 of user:password>" },
       "requestTimeoutMs": 20000,
       "attestCapabilities": false
     }
@@ -194,13 +193,36 @@ Agent 通过 `-remote-at-config` 或 `SIMPLUS_AGENT_REMOTE_AT_CONFIG` 读取一�
 | `key` | `^[a-z0-9][a-z0-9-]{0,30}$`，全局唯一，构成设备 ID `bridge-<key>` |
 | `baseUrl` | 只允许 `http` / `https`，必须有 host，不允许 userinfo、query、fragment |
 | `profile` | 必须能在 adapter registry 中解析；拥有专用 driver transport 的型号（例如 QDC507 SMS）会被拒绝 |
-| `username` / `password` | 同时给出或同时省略；用户名不含冒号 |
 | `requestTimeoutMs` | 1000..120000，默认 20000 |
 | `commandTimeoutMs` | 1000..180000，默认 20000。**普通命令的上限，Agent 会把调用方的超时钳到这个值** |
 | `exchangeTimeoutMs` | 1000..180000，默认 30000。提示符类命令的上限，同上 |
 | `responseSizeBytes` | 8192..65536,默认 8192。**响应上限**,见下节 |
-| `headers` | 最多 8 条自定义请求头，供使用非 HTTP Basic 认证的桥。拒绝改写请求形态的头（`Content-Type`/`Content-Length`/`Host`/`Accept`）与 hop-by-hop 头，值不得含控制字符 |
+| `headers` | **鉴权的唯一入口**,最多 8 条请求头。拒绝改写请求形态的头(`Content-Type`/`Content-Length`/`Host`/`Accept`)与 hop-by-hop 头,值不得含控制字符。`Authorization` 不在拒绝名单里——它正是常规用法 |
 | `attestCapabilities` | 见下节。默认 `false` |
+
+### 鉴权只有一个入口
+
+曾经有 `username` / `password` 两个字段。它们被去掉了:HTTP Basic 只是把凭据编码成 `Authorization: Basic base64(user:password)` 的一种方案,单独建模它没有换来任何东西,却要求规定「配置头与 Basic 谁优先」这样一条规则,并且把用别的方案鉴权的桥排除在外。
+
+现在凭据一律走 `headers`,任何方案都能接:
+
+```json
+"headers": { "Authorization": "Basic YWdlbnQ6c2VjcmV0" }
+"headers": { "Authorization": "Bearer <token>" }
+"headers": { "X-Auth-Token": "<token>" }
+```
+
+Basic 的值这样生成:
+
+```bash
+printf '%s' 'agent:secret' | base64
+```
+
+`Target` 里存放这些头的字段是私有的,和 `baseURL` 一样——凭据在这里,所以「拿到一个 Target」不该等于「能读到凭据」。启动日志只能取到 `BaseURLHost()`。
+
+用旧字段的配置会**直接加载失败**并提示凭据搬到了哪里。未知字段本来就会被拒,所以旧配置不可能静默降级成不带凭据运行;那条提示只是为了让运维看到「去 headers」而不是「unknown field」。
+
+桥不做鉴权也是合法的(例如前面挂了替它鉴权的代理),这里不强制要求凭据——强制也不会让任何东西更安全。
 
 ### 为什么响应上限也必须可配
 

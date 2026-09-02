@@ -180,13 +180,11 @@ func (current *session) do(ctx context.Context, method, path string, payload []b
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	// Configured headers are applied before Basic auth so a bridge that
-	// authenticates differently can still not displace an explicit credential.
-	for name, value := range current.target.Headers {
+	// One authentication mechanism: whatever the configuration supplies. There is
+	// no second path that could disagree with it, and therefore no precedence rule
+	// to get wrong.
+	for name, value := range current.target.headers {
 		request.Header.Set(name, value)
-	}
-	if current.target.Username != "" {
-		request.SetBasicAuth(current.target.Username, current.target.Password)
 	}
 	response, err := current.client.Do(request)
 	if err != nil {
