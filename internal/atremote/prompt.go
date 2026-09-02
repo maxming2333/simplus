@@ -89,7 +89,7 @@ func (current *session) Exchange(ctx context.Context, command string, payload []
 	if decodeErr := decoder.Decode(&decoded); decodeErr != nil {
 		return nil, ErrQueryFailed
 	}
-	lines, boundsErr := normalizeLines(decoded.Lines, command)
+	lines, boundsErr := normalizeLines(decoded.Lines, command, current.responseCeiling())
 	if boundsErr != nil {
 		return nil, boundsErr
 	}

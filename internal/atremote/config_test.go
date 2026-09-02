@@ -1,6 +1,9 @@
 package atremote
 
 import (
+	"context"
+	"errors"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -213,5 +216,86 @@ func TestLoadConfigDefaultsTunableTransportOptions(t *testing.T) {
 	}
 	if len(target.Headers) != 0 {
 		t.Fatalf("headers = %#v", target.Headers)
+	}
+}
+
+// TestResponseCeilingIsPerBridgeAndBounded covers the failure that made a full
+// SMS storage listing impossible: the default ceiling is smaller than a loaded
+// SIM's transcript, and truncation is refused as a whole, so the storage can
+// neither be read nor drained.
+func TestResponseCeilingIsPerBridgeAndBounded(t *testing.T) {
+	config, err := LoadConfig(writeConfig(t,
+		`{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","responseSizeBytes":32768}]}`, 0o600))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := config.Bridges[0].Target.ResponseSize; got != 32768 {
+		t.Fatalf("response size = %d", got)
+	}
+	defaulted, err := LoadConfig(writeConfig(t, validConfig, 0o600))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := defaulted.Bridges[0].Target.ResponseSize; got != maximumResponseSize {
+		t.Fatalf("default response size = %d, want %d", got, maximumResponseSize)
+	}
+	for _, body := range []string{
+		`{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","responseSizeBytes":1024}]}`,
+		`{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","responseSizeBytes":1048576}]}`,
+		`{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","responseSizeBytes":-1}]}`,
+	} {
+		if _, err := LoadConfig(writeConfig(t, body, 0o600)); err == nil {
+			t.Fatalf("LoadConfig accepted an out-of-range response size: %s", body)
+		}
+	}
+}
+
+// TestLargeTranscriptFitsAnEnlargedCeiling proves the enlarged ceiling actually
+// carries a loaded-SIM listing rather than only being accepted as a number.
+func TestLargeTranscriptFitsAnEnlargedCeiling(t *testing.T) {
+	entry := `"+CMGL: 1,1,,152","` + strings.Repeat("A", 320) + `",`
+	bridge := newFakeBridge()
+	bridge.commandBody = `{"lines":[` + strings.Repeat(entry, 40) + `"OK"]}`
+	server := httptest.NewServer(bridge.handler())
+	t.Cleanup(server.Close)
+
+	small, err := NewTargetWithOptions("a", server.URL, "", "", TargetOptions{RequestTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("NewTargetWithOptions: %v", err)
+	}
+	opener, err := NewOpener([]Target{small})
+	if err != nil {
+		t.Fatalf("NewOpener: %v", err)
+	}
+	session, err := opener.Open(Locator("a"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := session.Query(context.Background(), "AT+CMGL=4", time.Second); !errors.Is(err, ErrResponseOversize) {
+		t.Fatalf("default ceiling error = %v, want ErrResponseOversize", err)
+	}
+	session.Close()
+
+	large, err := NewTargetWithOptions("a", server.URL, "", "", TargetOptions{
+		RequestTimeout: 2 * time.Second, ResponseSize: 65536,
+	})
+	if err != nil {
+		t.Fatalf("NewTargetWithOptions: %v", err)
+	}
+	opener, err = NewOpener([]Target{large})
+	if err != nil {
+		t.Fatalf("NewOpener: %v", err)
+	}
+	session, err = opener.Open(Locator("a"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer session.Close()
+	lines, err := session.Query(context.Background(), "AT+CMGL=4", time.Second)
+	if err != nil {
+		t.Fatalf("enlarged ceiling still refused a loaded-SIM listing: %v", err)
+	}
+	if len(lines) != 81 {
+		t.Fatalf("lines = %d, want 40 headers plus 40 PDUs plus OK", len(lines))
 	}
 }

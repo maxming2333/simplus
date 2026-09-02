@@ -20,8 +20,21 @@ import (
 // behavior.
 const (
 	maximumCommandLength = 1024
-	maximumResponseSize  = 8192
-	maximumResponseLines = 256
+
+	// maximumResponseSize is the default response ceiling. It matches the local
+	// tty transport, which is the right default for probe and APDU traffic.
+	maximumResponseSize = 8192
+
+	// maximumBridgeResponseSize bounds what a per-bridge override may request.
+	//
+	// A full SMS storage listing is the shape that needs more than the default:
+	// one 160-character message is roughly 340 bytes of transcript, and a SIM
+	// commonly holds 40, so a full listing approaches 14 KB. Truncating it is not
+	// a partial result — it destroys the transcript, so the batch is refused and
+	// the storage can neither be read nor drained.
+	maximumBridgeResponseSize = 65536
+
+	maximumResponseLines = 1024
 
 	minimumQueryTimeout = 100 * time.Millisecond
 	maximumQueryTimeout = 180 * time.Second
@@ -101,7 +114,7 @@ func (current *session) Query(ctx context.Context, command string, timeout time.
 	if decodeErr := decoder.Decode(&decoded); decodeErr != nil {
 		return nil, ErrQueryFailed
 	}
-	lines, boundsErr := normalizeLines(decoded.Lines, command)
+	lines, boundsErr := normalizeLines(decoded.Lines, command, current.responseCeiling())
 	if boundsErr != nil {
 		return nil, boundsErr
 	}
@@ -139,6 +152,14 @@ func (current *session) Close() {
 // do performs one bounded JSON request and returns the size-limited body.
 // Response bodies are read through a limit reader so a hostile or broken bridge
 // cannot force an unbounded allocation.
+// responseCeiling is the bound this bridge's replies must fit within.
+func (current *session) responseCeiling() int {
+	if current.target.ResponseSize > 0 {
+		return current.target.ResponseSize
+	}
+	return maximumResponseSize
+}
+
 func (current *session) do(ctx context.Context, method, path string, payload []byte) ([]byte, int, error) {
 	request, err := http.NewRequestWithContext(ctx, method, current.target.baseURL+path, bytes.NewReader(payload))
 	if err != nil {
@@ -158,16 +179,17 @@ func (current *session) do(ctx context.Context, method, path string, payload []b
 	if err != nil {
 		return nil, 0, ErrQueryFailed
 	}
+	ceiling := current.responseCeiling()
 	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maximumResponseSize))
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, int64(ceiling)))
 		_ = response.Body.Close()
 	}()
-	body, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseSize+1))
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(ceiling)+1))
 	if err != nil {
 		zero(body)
 		return nil, response.StatusCode, ErrQueryFailed
 	}
-	if len(body) > maximumResponseSize {
+	if len(body) > ceiling {
 		zero(body)
 		return nil, response.StatusCode, ErrResponseOversize
 	}
@@ -178,7 +200,10 @@ func (current *session) do(ctx context.Context, method, path string, payload []b
 // carriage returns split lines, whitespace is trimmed, empty lines and the
 // echoed command are dropped, and control characters are removed. The bridge is
 // not trusted to have done any of this.
-func normalizeLines(raw []string, command string) ([]string, error) {
+func normalizeLines(raw []string, command string, ceiling int) ([]string, error) {
+	if ceiling <= 0 {
+		ceiling = maximumResponseSize
+	}
 	if len(raw) > maximumResponseLines {
 		return nil, ErrResponseOversize
 	}
@@ -191,12 +216,12 @@ func normalizeLines(raw []string, command string) ([]string, error) {
 			if part == "" || part == command {
 				continue
 			}
-			part = safeText(part, maximumResponseSize)
+			part = safeText(part, ceiling)
 			if part == "" || part == command {
 				continue
 			}
 			total += len(part)
-			if total > maximumResponseSize || len(lines) >= maximumResponseLines {
+			if total > ceiling || len(lines) >= maximumResponseLines {
 				return nil, ErrResponseOversize
 			}
 			lines = append(lines, part)

@@ -68,6 +68,12 @@ type Target struct {
 	// bridge unresponsive rather than producing a useful answer.
 	ExchangeTimeout time.Duration
 
+	// ResponseSize is the reply ceiling for this bridge, or zero for the default.
+	// A bridge whose modem storage listing exceeds the default needs a larger
+	// value: a truncated transcript is refused as a whole, so the storage can
+	// neither be read nor drained.
+	ResponseSize int
+
 	// Headers are additional request headers, for a bridge that authenticates
 	// with something other than HTTP Basic. Hop-by-hop and body-framing headers
 	// are rejected so a header cannot rewrite the request shape.
@@ -101,6 +107,7 @@ type TargetOptions struct {
 	RequestTimeout  time.Duration
 	CommandTimeout  time.Duration
 	ExchangeTimeout time.Duration
+	ResponseSize    int
 	Headers         map[string]string
 }
 
@@ -149,10 +156,19 @@ func NewTargetWithOptions(key, baseURL, username, password string, options Targe
 	if err != nil {
 		return Target{}, err
 	}
+	responseSize := options.ResponseSize
+	if responseSize == 0 {
+		responseSize = maximumResponseSize
+	}
+	if responseSize < maximumResponseSize || responseSize > maximumBridgeResponseSize {
+		return Target{}, fmt.Errorf("remote AT bridge %q response size must be from %d through %d bytes",
+			key, maximumResponseSize, maximumBridgeResponseSize)
+	}
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
 	return Target{
 		Key: key, Username: username, Password: password, RequestTimeout: timeout,
-		CommandTimeout: commandTimeout, ExchangeTimeout: exchangeTimeout, Headers: headers,
+		CommandTimeout: commandTimeout, ExchangeTimeout: exchangeTimeout,
+		ResponseSize: responseSize, Headers: headers,
 		baseURL: parsed.Scheme + "://" + parsed.Host + parsed.Path, plaintext: parsed.Scheme == "http",
 	}, nil
 }

@@ -58,6 +58,7 @@ type configBridge struct {
 	RequestTimeoutMS   int64             `json:"requestTimeoutMs"`
 	CommandTimeoutMS   int64             `json:"commandTimeoutMs"`
 	ExchangeTimeoutMS  int64             `json:"exchangeTimeoutMs"`
+	ResponseSizeBytes  int               `json:"responseSizeBytes"`
 	Headers            map[string]string `json:"headers"`
 	AttestCapabilities bool              `json:"attestCapabilities"`
 }
@@ -140,6 +141,7 @@ func parseConfig(body []byte) (Config, error) {
 			RequestTimeout:  time.Duration(entry.RequestTimeoutMS) * time.Millisecond,
 			CommandTimeout:  time.Duration(entry.CommandTimeoutMS) * time.Millisecond,
 			ExchangeTimeout: time.Duration(entry.ExchangeTimeoutMS) * time.Millisecond,
+			ResponseSize:    entry.ResponseSizeBytes,
 			Headers:         entry.Headers,
 		})
 		if err != nil {
