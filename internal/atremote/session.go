@@ -74,6 +74,10 @@ type session struct {
 	token   string
 	closed  bool
 	timeout time.Duration
+
+	// responseLimit overrides the transcript ceiling for replies that are not AT
+	// transcripts. Zero keeps the configured transcript bound.
+	responseLimit int
 }
 
 var _ attransport.Session = (*session)(nil)
@@ -154,6 +158,9 @@ func (current *session) Close() {
 // cannot force an unbounded allocation.
 // responseCeiling is the bound this bridge's replies must fit within.
 func (current *session) responseCeiling() int {
+	if current.responseLimit > 0 {
+		return current.responseLimit
+	}
 	if current.target.ResponseSize > 0 {
 		return current.target.ResponseSize
 	}
@@ -161,7 +168,13 @@ func (current *session) responseCeiling() int {
 }
 
 func (current *session) do(ctx context.Context, method, path string, payload []byte) ([]byte, int, error) {
-	request, err := http.NewRequestWithContext(ctx, method, current.target.baseURL+path, bytes.NewReader(payload))
+	// A nil payload sends no body at all rather than an empty one, so a bodyless
+	// read is not framed as a zero-length write.
+	var reader io.Reader
+	if payload != nil {
+		reader = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, current.target.baseURL+path, reader)
 	if err != nil {
 		return nil, 0, ErrQueryFailed
 	}

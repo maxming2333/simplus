@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/tasks/09-03-bridged-call-notifications/design.md","reason":"逐条核对失败行为表与测试清单,尤其是「丢失量只产生一条 warning、永不产生通话记录」。"}
+{"file":".trellis/spec/core/backend/quality-and-testing.md","reason":"核对确定性验证阶梯是否跑全,HIL 是否保持 opt-in。"}
+{"file":".trellis/spec/core/backend/storage-and-migrations.md","reason":"核对 migration 双向、schema_version 与 store_test 版本锚点是否同步。"}
+{"file":".trellis/spec/core/backend/application-boundaries.md","reason":"核对 application 层没有被注入 logger、路由事实没有泄漏到 agentapi。"}

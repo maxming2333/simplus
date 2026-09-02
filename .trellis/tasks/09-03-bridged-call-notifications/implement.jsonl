@@ -1,1 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/tasks/09-03-bridged-call-notifications/prd.md","reason":"这次交付要满足的行为:只需知道谁在什么时候打过来,不需要接听。"}
+{"file":".trellis/tasks/09-03-bridged-call-notifications/design.md","reason":"已定稿的分层归属、游标状态机、丢失量推导方式,以及为什么不走 AT 中继。"}
+{"file":".trellis/spec/core/backend/application-boundaries.md","reason":"端口要窄、Line 身份要保持、不确定动作 fail-closed;新增的来电同步必须落在同样的边界里。"}
+{"file":".trellis/spec/core/backend/storage-and-migrations.md","reason":"calls dataset 归属、Goose Up/Down 双向 schema_version、keyset 索引与旧 schema 迁移测试要求。"}
+{"file":".trellis/spec/core/backend/quality-and-testing.md","reason":"store/application/httptest 三层同址覆盖,以及不依赖 HIL 的确定性验证阶梯。"}
+{"file":".trellis/spec/core/backend/api-contracts.md","reason":"稳定错误码与鉴权边界;agent socket 上新增只读操作要沿用既有契约形状。"}
+{"file":"docs/decisions/0028-remote-at-bridge-configuration-ownership.md","reason":"桥凭据只走私有文件、不可从 Web/API 到达;来电事件轮询必须复用同一份配置而不新开入口。"}
+{"file":"docs/remote-at-bridge.md","reason":"桥的既有对外契约与运维说明,新增 /events/calls 消费方行为要记在同一处。"}
