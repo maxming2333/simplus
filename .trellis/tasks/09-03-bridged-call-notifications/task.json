@@ -12,7 +12,7 @@
   "assignee": "maxming",
   "createdAt": "2026-09-03",
   "completedAt": null,
-  "branch": null,
+  "branch": "feat/remote-at-bridge",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
