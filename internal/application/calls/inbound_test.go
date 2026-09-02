@@ -434,7 +434,7 @@ func TestSyncInboundCallsNeverStoresAnEpochArrivalTime(t *testing.T) {
 	}
 }
 
-func TestSyncInboundCallsDoesNothingWithoutAReaderOrAVoiceLine(t *testing.T) {
+func TestSyncInboundCallsDoesNothingWithoutAReaderOrAResolvableLine(t *testing.T) {
 	t.Run("no reader", func(t *testing.T) {
 		store := newCallStore()
 		service, err := New(t.Context(), store, staticLines{topology: voiceTopology(syncSubscriberA)})
@@ -449,9 +449,6 @@ func TestSyncInboundCallsDoesNothingWithoutAReaderOrAVoiceLine(t *testing.T) {
 	for name, mutate := range map[string]func(*inventory.Topology){
 		"line not ready": func(topology *inventory.Topology) {
 			topology.Lines[0].State = inventory.LineUnavailable
-		},
-		"no voice capability": func(topology *inventory.Topology) {
-			topology.Lines[0].Capabilities.CellularVoice = false
 		},
 		// An unresolvable Line is the ordinary state of one whose device or SIM is
 		// absent, so it is skipped rather than reported as a failure.
@@ -531,5 +528,35 @@ func TestSyncInboundCallsTreatsAModemWithNoRingAsNothingToRead(t *testing.T) {
 	}
 	if result.LinesPolled != 0 || len(store.cursors) != 0 {
 		t.Fatalf("result = %+v cursors = %v", result, store.cursors)
+	}
+}
+
+// TestSyncInboundCallsPollsALineWithoutTheVoiceCapability is the regression guard
+// for a gate that would have made this feature silently dead.
+//
+// The agent-reported capability mapping hardcodes CellularVoice false, because
+// carrying a voice call is unproven on this hardware. Filtering on it would have
+// skipped every Line on the hardware backend — no polling, no records, no error,
+// nothing in any log. A notification is not a voice capability, and whether a
+// device can report observed calls is the device's answer to give.
+func TestSyncInboundCallsPollsALineWithoutTheVoiceCapability(t *testing.T) {
+	topology := voiceTopology(syncSubscriberA)
+	topology.Lines[0].Capabilities.CellularVoice = false
+	store := newCallStore()
+	service, err := New(t.Context(), store, staticLines{topology: topology})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.now = func() time.Time { return time.Unix(1772600000, 0).UTC() }
+	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 1,
+		ObservedCall{Sequence: 1, Number: "13000000001", ObservedAt: observedAt(0)},
+	)}}
+	service.UseCallEventReader(reader)
+	result, err := service.SyncInboundCalls(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.LinesPolled != 1 || result.Recorded != 1 {
+		t.Fatalf("result = %+v, want the Line polled and the call recorded", result)
 	}
 }

@@ -130,6 +130,9 @@ lost = max(0, oldestSequence - (lastSequence + 1))
 
 ### Simplus 侧的消费
 
+清扫只按 `LineReady` 过滤,**不看 `CellularVoice`**。后者的含义是「这条 Line 能承载语音通话」,agent 上报的能力映射把它硬编码为 false,因为那件事在这套硬件上未经验证(且 `validate.go` 会连带要求 `DigitalVoiceMedia` 与资源组的 `ResourceVoiceMedia`)。用它当闸门会让硬件后端下一条 Line 都轮询不到,功能静默死掉。通知不是语音能力;某台设备能不能上报来电,由设备自己回答——没有事件环的会返回「不支持」,清扫据此安静跳过。
+
+
 游标持久化为 `(deviceID -> bootId, subscriptionFingerprint, lastSequence)`,复用短信同步的 2 秒节奏,不另开定时器。
 
 - **先持久化,再推进游标。** 两者之间崩溃会重读该事件,稳定身份 `(deviceID, bootId, sequence)` 把重复吸收掉;反过来则永久丢失且无从发现。身份里的 `bootId` 不可省:少了它,新一次启动的 `sequence=1` 会与上一次的 `sequence=1` 撞成同一条,第二通来电被当作重放静默吞掉。

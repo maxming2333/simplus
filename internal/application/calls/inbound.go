@@ -103,7 +103,16 @@ func (service *Service) SyncInboundCalls(ctx context.Context) (InboundCallSyncRe
 	}
 	var failures error
 	for _, line := range topology.Lines {
-		if line.State != inventory.LineReady || !line.Capabilities.CellularVoice {
+		// Readiness is the only filter here. CellularVoice would be the wrong gate:
+		// it means the Line can carry a voice call, and the agent-reported mapping
+		// hardcodes it false precisely because that is unproven — gating on it would
+		// make this sweep poll nothing at all on the hardware backend and the feature
+		// would be silently dead.
+		//
+		// A notification is not a voice capability. Whether a particular device can
+		// report observed calls is answered by the device itself: one with no event
+		// ring returns ErrCallEventsUnsupported and is skipped quietly below.
+		if line.State != inventory.LineReady {
 			continue
 		}
 		target, resolveErr := resolveCallEventLine(topology, line)
