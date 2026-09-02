@@ -27,7 +27,7 @@ const (
 	maximumTokenLength = 128
 
 	defaultCommandTimeout  = 20 * time.Second
-	defaultExchangeTimeout = 30 * time.Second
+	defaultExchangeTimeout = 10 * time.Second
 	minimumBoundedTimeout  = time.Second
 	maximumBoundedTimeout  = 180 * time.Second
 
