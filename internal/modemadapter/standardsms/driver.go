@@ -17,17 +17,6 @@ import (
 	"github.com/leonfox28/simplus/internal/smscodec"
 )
 
-// primaryStorage is the SIM's message memory. The driver selects it for every
-// operation; see storage_probe.go for why the modem's own memory is only probed.
-const primaryStorage = "SM"
-
-// selectStorageCommand builds the 3GPP TS 27.005 storage selection for read,
-// write and receive. All three are set together so a message cannot arrive in one
-// memory while the driver lists another.
-func selectStorageCommand(storage string) string {
-	return `AT+CPMS="` + storage + `","` + storage + `","` + storage + `"`
-}
-
 const (
 	modeTimeout   = 3 * time.Second
 	listTimeout   = 10 * time.Second
@@ -58,10 +47,6 @@ type Transport interface {
 type Driver struct {
 	model     modemadapter.Adapter
 	transport Transport
-
-	probeEvery    int
-	probeObserver AlternateStorageObserver
-	probeState    storageProbeState
 }
 
 type StoredPDU struct {
@@ -140,17 +125,11 @@ func (failure *ModemError) Is(target error) bool {
 // adapter. The model owns profile identity and control-endpoint resolution; the
 // command set itself is standard and shared by every model that passes its own
 // SMS evidence.
-func NewDriver(model modemadapter.Adapter, transport Transport, options ...DriverOption) (*Driver, error) {
+func NewDriver(model modemadapter.Adapter, transport Transport) (*Driver, error) {
 	if model == nil || transport == nil {
 		return nil, errors.New("3GPP SMS driver requires a model adapter and a transcript transport")
 	}
-	driver := &Driver{model: model, transport: transport}
-	for _, option := range options {
-		if option != nil {
-			option(driver)
-		}
-	}
-	return driver, nil
+	return &Driver{model: model, transport: transport}, nil
 }
 
 // Profile reports the model this driver serves, so the adapter layer can reject
@@ -207,14 +186,7 @@ func (driver *Driver) List(ctx context.Context, device agentapi.DeviceReport) ([
 	if err != nil {
 		return nil, err
 	}
-	messages, err := parseList(body)
-	if err != nil {
-		return nil, err
-	}
-	// Runs inside this listing's exclusive conversation, best effort, and cannot
-	// fail the listing it carries.
-	driver.probeAlternateStorage(ctx, transport, endpoint)
-	return messages, nil
+	return parseList(body)
 }
 
 func (driver *Driver) Read(ctx context.Context, device agentapi.DeviceReport, index int) (StoredPDU, error) {
@@ -358,7 +330,7 @@ func configureSMS(ctx context.Context, command func(context.Context, string, str
 	if len(body) != 0 {
 		return invalidResponse(nil, false)
 	}
-	lines, err = command(ctx, endpointNode, selectStorageCommand(primaryStorage), modeTimeout)
+	lines, err = command(ctx, endpointNode, `AT+CPMS="SM","SM","SM"`, modeTimeout)
 	if err != nil {
 		return transportFailure(err)
 	}
