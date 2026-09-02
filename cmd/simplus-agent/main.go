@@ -185,7 +185,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		logger.Error("ML307A SMS transport initialization failed", "error", transportErr)
 		return 1
 	}
-	ml307aAdapter, adapterErr := composeSMSAdapter(modemadapter.ML307ASMS{}, ml307aTransport, stateStore)
+	// Diagnostic probe, log only: find out whether messages ever land in the
+	// modem's own memory instead of the SIM's. Covering both memories properly
+	// would make storage indices non-unique and needs a persisted schema change,
+	// so the probe answers the question first. Enabled only for ML307A, whose
+	// bridged path is the one with the open question.
+	ml307aAdapter, adapterErr := composeSMSAdapter(modemadapter.ML307ASMS{}, ml307aTransport, stateStore,
+		standardsms.WithAlternateStorageProbe(30, func(storage string, used int) {
+			logger.Warn("SMS found in modem memory rather than SIM storage; the driver lists only SIM storage, so these are not retrievable",
+				"storage", storage, "used", used)
+		}))
 	if adapterErr != nil {
 		closeState()
 		logger.Error("ML307A SMS composition failed", "error", adapterErr)
@@ -321,8 +330,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 // the durable recovery store. The store is keyed by SIM identity rather than by
 // model, so both models share one instance: a SIM moved between modems keeps its
 // inbound and operation state.
-func composeSMSAdapter(model modemadapter.Adapter, transport standardsms.Transport, store standardsms.StateStore) (modemadapter.Adapter, error) {
-	driver, err := standardsms.NewDriver(model, transport)
+func composeSMSAdapter(model modemadapter.Adapter, transport standardsms.Transport, store standardsms.StateStore,
+	options ...standardsms.DriverOption) (modemadapter.Adapter, error) {
+	driver, err := standardsms.NewDriver(model, transport, options...)
 	if err != nil {
 		return nil, err
 	}
