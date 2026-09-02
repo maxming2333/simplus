@@ -93,7 +93,7 @@ serialized against the modem.
 | bridge unreachable | cycle reports the error, cursor unchanged, retried next tick |
 | malformed envelope or `bootId` | rejected, cursor unchanged, no record |
 | `bootId` changed | cursor reset to zero, one warning log line |
-| event Line unresolvable | no record, no alert, cursor still advances so it is not retried forever |
+| event Line unresolvable | no record, cursor still advances so it is not retried forever |
 | record persist fails | cursor not advanced, event re-read next tick |
 | derived loss non-zero | one warning log line with the count |
 | `observedAt` zero | receive time used, never 1970 |
@@ -111,6 +111,7 @@ than stall the batch.
 - lost calls: one warning per advance, no record ever created, and a fully
   consumed wrapped ring derives zero so a busy line logs nothing.
 - clock: `observedAt` zero falls back; no 1970 timestamps reach persistence.
-- privacy: caller numbers absent from ordinary logs and from alert text.
+- privacy: caller numbers absent from ordinary logs, including the lost-call and
+  restart warnings, which carry counts only.
 - opt-in HIL: a real call reaches a Line record; requires the bridge in reach and
   someone to place the call.
