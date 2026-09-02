@@ -13,9 +13,31 @@
 - SIM AKA 是「打开逻辑通道 → 交换 APDU → 关闭通道」的粘性序列，必须落在同一条串口会话上。HTTP 用服务端下发的 session token 直接表达这件事；
 - HTTP 方案不需要额外的 broker 容器。
 
-## 三个操作
+## 五个端点
 
-基址由 Agent 私有配置给出，只含 scheme、host 和可选路径。可选 HTTP Basic 认证。桥固件必须保证同一时刻只有一个 session 持有串口。
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `{base}/at/session` | 打开会话，独占串口 |
+| `POST` | `{base}/at/command` | 下发一条命令 |
+| `POST` | `{base}/at/exchange` | 提示符类命令（`AT+CMGS`） |
+| `DELETE` | `{base}/at/session` | 关闭会话 |
+| `GET` | `{base}/events/calls` | 读取已观测到的来电 |
+
+`/events/calls` **不在 `/at/*` 下,这是刻意的**:它不是 AT 中继,不占串口、不需要会话。桥固件也不应该让它走会话机制——一条通知不该能挡住一条短信发出去。
+
+### `{base}` 就是前缀
+
+基址由 Agent 私有配置给出,含 scheme、host 和**可选路径**,所有端点路径都拼在它后面。所以桥要给这套契约加命名空间,不需要任何额外配置项:
+
+| `baseUrl` | 实际请求 |
+| --- | --- |
+| `http://bridge.lan` | `/at/session`、`/events/calls` |
+| `http://bridge.lan/api/v1` | `/api/v1/at/session`、`/api/v1/events/calls` |
+| `http://bridge.lan/bridge/modem-a` | `/bridge/modem-a/at/session`、`/bridge/modem-a/events/calls` |
+
+路径必须已是规范形式。`/a/../b`、`/api//v1`、`/./api` 会被拒绝而**不是**被改写:同一个前缀有多种写法会让配置难以比对,而静默改写等于把请求发到运维没写的地方。userinfo、query、fragment 一律拒绝(凭据走 `headers`,见下)。
+
+桥固件必须保证同一时刻只有一个 session 持有串口。
 
 ### 打开会话
 

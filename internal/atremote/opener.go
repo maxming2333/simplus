@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -165,7 +166,16 @@ func NewTargetWithOptions(key, baseURL string, options TargetOptions) (Target, e
 		return Target{}, fmt.Errorf("remote AT bridge %q response size must be from %d through %d bytes",
 			key, maximumResponseSize, maximumBridgeResponseSize)
 	}
+	// A base path is how a bridge namespaces this contract: every operation path is
+	// appended to it, so "http://host/api/v1" serves /api/v1/at/session and
+	// /api/v1/events/calls. It must already be written in normal form. Accepting
+	// "/a/../b" would let one logical prefix be spelled several ways and would send
+	// a traversal-shaped path to the bridge; rewriting it silently would send the
+	// request somewhere the operator did not write.
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
+	if parsed.Path != "" && parsed.Path != path.Clean(parsed.Path) {
+		return Target{}, fmt.Errorf("remote AT bridge %q base URL path must already be normalized", key)
+	}
 	return Target{
 		Key: key, RequestTimeout: timeout,
 		CommandTimeout: commandTimeout, ExchangeTimeout: exchangeTimeout,

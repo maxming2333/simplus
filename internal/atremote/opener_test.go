@@ -644,3 +644,45 @@ func TestTargetRejectsUnsafeHeadersAndCeilings(t *testing.T) {
 func basicHeader(username, password string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
 }
+
+// TestBasePathNamespacesEveryOperation records how a bridge namespaces this
+// contract. There is no separate prefix setting: the base URL's path is the prefix,
+// and every operation path — including the call events read, which is deliberately
+// not under the AT namespace — is appended to it.
+func TestBasePathNamespacesEveryOperation(t *testing.T) {
+	for _, testCase := range []struct{ base, wantSession, wantEvents string }{
+		{"http://192.0.2.10", "http://192.0.2.10/at/session", "http://192.0.2.10/events/calls"},
+		{"http://192.0.2.10/", "http://192.0.2.10/at/session", "http://192.0.2.10/events/calls"},
+		{"http://192.0.2.10/api/v1", "http://192.0.2.10/api/v1/at/session", "http://192.0.2.10/api/v1/events/calls"},
+		{"http://192.0.2.10/api/v1/", "http://192.0.2.10/api/v1/at/session", "http://192.0.2.10/api/v1/events/calls"},
+		{"http://192.0.2.10/bridge/modem-a", "http://192.0.2.10/bridge/modem-a/at/session", "http://192.0.2.10/bridge/modem-a/events/calls"},
+	} {
+		target, err := NewTarget("k", testCase.base, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", testCase.base, err)
+		}
+		if got := target.baseURL + sessionPath; got != testCase.wantSession {
+			t.Errorf("%s session -> %s, want %s", testCase.base, got, testCase.wantSession)
+		}
+		if got := target.baseURL + eventsCallsPath; got != testCase.wantEvents {
+			t.Errorf("%s events -> %s, want %s", testCase.base, got, testCase.wantEvents)
+		}
+	}
+}
+
+// TestBasePathMustBeNormalized keeps one logical prefix from being spelled several
+// ways, and keeps a traversal-shaped path from reaching the bridge. It is refused
+// rather than rewritten: rewriting would send the request somewhere the operator
+// did not write.
+func TestBasePathMustBeNormalized(t *testing.T) {
+	for _, base := range []string{
+		"http://192.0.2.10/a/../b",
+		"http://192.0.2.10/api//v1",
+		"http://192.0.2.10/./api",
+		"http://192.0.2.10/api/v1/..",
+	} {
+		if _, err := NewTarget("k", base, 0); err == nil {
+			t.Errorf("%s was accepted", base)
+		}
+	}
+}
