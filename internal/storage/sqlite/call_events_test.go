@@ -126,7 +126,7 @@ func TestRecordObservedInboundCallIsTerminalAndComplete(t *testing.T) {
 	ctx := t.Context()
 	at := time.Unix(1772505600, 0).UTC()
 	stored, replayed, err := set.RecordObservedInboundCall(ctx,
-		observedCall("call_observed_00000001", "in_call_observed_0000001", "15817320262", at))
+		observedCall("call_observed_00000001", "in_call_observed_0000001", "13000000001", at))
 	if err != nil || replayed {
 		t.Fatalf("RecordObservedInboundCall: replayed = %v err = %v", replayed, err)
 	}
@@ -161,7 +161,7 @@ func TestRecordObservedInboundCallAbsorbsARepeatButRefusesACollision(t *testing.
 	set := openTestSet(t)
 	ctx := t.Context()
 	at := time.Unix(1772505600, 0).UTC()
-	original := observedCall("call_observed_00000001", "in_call_observed_0000001", "15817320262", at)
+	original := observedCall("call_observed_00000001", "in_call_observed_0000001", "13000000001", at)
 	if _, replayed, err := set.RecordObservedInboundCall(ctx, original); err != nil || replayed {
 		t.Fatalf("first write: replayed = %v err = %v", replayed, err)
 	}
@@ -184,7 +184,7 @@ func TestRecordObservedInboundCallAbsorbsARepeatButRefusesACollision(t *testing.
 	// A repeat that disagrees about who called is an identity collision, not a
 	// replay. Silently keeping either version would be worse than refusing.
 	collision := original
-	collision.RemoteAddress = "13334262200"
+	collision.RemoteAddress = "13000000002"
 	if _, _, err := set.RecordObservedInboundCall(ctx, collision); !errors.Is(err, call.ErrStateConflict) {
 		t.Fatalf("err = %v, want a conflict for a colliding identity", err)
 	}
@@ -217,14 +217,14 @@ func TestObservedInboundCallsAppearInTheOrdinaryCallHistory(t *testing.T) {
 	ctx := t.Context()
 	at := time.Unix(1772505600, 0).UTC()
 	if _, _, err := set.RecordObservedInboundCall(ctx,
-		observedCall("call_observed_00000001", "in_call_observed_0000001", "15817320262", at)); err != nil {
+		observedCall("call_observed_00000001", "in_call_observed_0000001", "13000000001", at)); err != nil {
 		t.Fatal(err)
 	}
 	records, err := set.ListCalls(ctx, 10)
 	if err != nil || len(records) != 1 {
 		t.Fatalf("records = %#v err = %v", records, err)
 	}
-	if records[0].RemoteAddress != "15817320262" || records[0].State != call.StateEnded {
+	if records[0].RemoteAddress != "13000000001" || records[0].State != call.StateEnded {
 		t.Fatalf("record = %+v", records[0])
 	}
 }

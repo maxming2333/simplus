@@ -16,7 +16,7 @@ The bridge side is done and verified on hardware
 ```
 GET {base}/events/calls?after=<seq>&limit=<n>
  -> {"bootId":"b4c1bc19…","latestSequence":1,"dropped":0,"uptimeMs":39460,
-     "events":[{"sequence":1,"number":"15817320262",
+     "events":[{"sequence":1,"number":"13000000001",
                 "observedAt":1788366807,"observedMs":1015444}]}
 ```
 

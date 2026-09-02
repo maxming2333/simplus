@@ -75,7 +75,11 @@ ML307A 蜂窝短信**仍为 `unverified`**。一张已驻网的指定 SIM（电�
 
 Simplus 侧的消费链路已实现:agentapi 上一条有界读操作(`POST /v1/calls/events`)、复用 2 秒节奏的应用层轮询、按 `(bootId, subscriptionFingerprint)` 定界的持久化游标,以及先持久化再推进游标的顺序。记录形态是终态的 `direction=inbound` / `state=ended` / `end_reason=CALL_NOT_ANSWERED`,出现在与其他通话相同的历史列表里。丢失量由消费方从自己的游标推导,只产生一条运维告警而不产生记录。
 
-这条链路的证据等级是 `unverified`:桥端的事件记录与读取已过真机,Simplus 侧的消费只有确定性测试覆盖,端到端「真实来电落成一条 Line 记录」需要桥可达且有人拨号,为 opt-in HIL。
+**该模组不发 `+CLIP:`。** 实测它在 `RING` 之后主动报一条 `+CLCC: 1,1,4,0,0,"…",129,"",0,0`,比固件自己去查早约 3 秒。`AT+CRC?` 为 `0`、`AT+CLIP?` 为 `1,2`,所以裸 `RING` 确实是它发的指示,只是号码走 `+CLCC:`。固件原先只认 `+CLIP:`,于是主叫号码只能靠 3 秒后主动 `AT+CLCC` 拿到——短促来电会拿空并记成「未知号码」;更要紧的是未被识别的 `+CLCC:` 若在某条命令在途时到达会被并入该命令的响应,**一通来电即可污染 `AT+CMGL` 的短信列举**。现已把 `+CLCC:` 与 `NO CARRIER`/`BUSY`/`NO ANSWER` 一并识别为主动上报(固件从不拨号挂机,后三者只可能是未经请求的)。
+
+端到端已用真实数据验证:一通真实来电 → 桥记录 `sequence=1` → agent 侧组合操作(设备发布、locator 往返、端点解析、响应校验)通过 → 应用层游标逻辑 → sqlite 落成一条 `direction=inbound` / `state=ended` / `end_reason=CALL_NOT_ANSWERED` / `answered_at` 为空的记录,`created_at` 为桥报的真实到达时刻;重复清扫不产生第二条。
+
+未经真机覆盖的只剩 agent socket 那一跳(需要 Linux 宿主),它两端各有确定性测试,且传输的类型结构一致。
 
 driver 只从 SIM 存储(`AT+CPMS="SM"`)读取,不覆盖模组自身内存(ME)。按 TS 23.038,class 1(ME-specific)理论上可能被模组存进自身内存,那样 SIM 列举看不到、也不会被删除;该模组的 `AT+CPMS=?` 只提供 `("SM","ME")`,没有合并视图 `MT`。这是明确的范围限制:覆盖两个存储会让存储索引不再独立标识一条消息,需要改动已持久化的记录形态并做 schema 迁移,而至今没有任何观测证据表明消息会落到 ME(首次检查为 0/180)。真出现时再单独立项。
 

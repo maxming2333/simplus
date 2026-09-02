@@ -62,7 +62,7 @@ func callEventsReport() CallEventsResponse {
 	return CallEventsResponse{
 		BootID: callEventsBootID, LatestSequence: 7, OldestSequence: 6,
 		Events: []CallEvent{
-			{Sequence: 6, Number: "15817320262", ObservedAt: time.Unix(1772505600, 0).UTC()},
+			{Sequence: 6, Number: "13000000001", ObservedAt: time.Unix(1772505600, 0).UTC()},
 			{Sequence: 7, Number: "", ObservedAt: time.Unix(1772505700, 0).UTC()},
 		},
 	}

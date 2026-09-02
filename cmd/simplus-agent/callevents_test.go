@@ -99,7 +99,7 @@ func bridgeReport() atremote.CallEventsSnapshot {
 	return atremote.CallEventsSnapshot{
 		BootID: "0f3a1c2b4d5e6f70", LatestSequence: 7, OldestSequence: 6,
 		Events: []atremote.CallEvent{
-			{Sequence: 6, Number: "15817320262", ObservedAt: 1772505600, ObservedMs: 900001},
+			{Sequence: 6, Number: "13000000001", ObservedAt: 1772505600, ObservedMs: 900001},
 			// An unsynchronized bridge clock.
 			{Sequence: 7, Number: "", ObservedAt: 0, ObservedMs: 913001},
 		},

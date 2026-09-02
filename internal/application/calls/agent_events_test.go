@@ -26,8 +26,8 @@ func TestAgentCallEventGatewayForwardsTheTargetAndTranslatesTheReport(t *testing
 	client := &stubCallEventClient{response: agentapi.CallEventsResponse{
 		BootID: "0f3a1c2b4d5e6f70", LatestSequence: 7, OldestSequence: 6,
 		Events: []agentapi.CallEvent{
-			{Sequence: 6, Number: "15817320262", ObservedAt: time.Unix(1772505600, 0).UTC()},
-			{Sequence: 7, Number: "13334262200", ObservedAt: time.Unix(1772505700, 0).UTC()},
+			{Sequence: 6, Number: "13000000001", ObservedAt: time.Unix(1772505600, 0).UTC()},
+			{Sequence: 7, Number: "13000000002", ObservedAt: time.Unix(1772505700, 0).UTC()},
 		},
 	}}
 	gateway, err := NewAgentCallEventGateway(client, gatewayInstanceID)
@@ -47,7 +47,7 @@ func TestAgentCallEventGatewayForwardsTheTargetAndTranslatesTheReport(t *testing
 	if report.BootID != "0f3a1c2b4d5e6f70" || report.LatestSequence != 7 || report.OldestSequence != 6 {
 		t.Fatalf("report = %+v", report)
 	}
-	if len(report.Events) != 2 || report.Events[0].Number != "15817320262" ||
+	if len(report.Events) != 2 || report.Events[0].Number != "13000000001" ||
 		!report.Events[1].ObservedAt.Equal(time.Unix(1772505700, 0).UTC()) {
 		t.Fatalf("events = %+v", report.Events)
 	}

@@ -153,8 +153,8 @@ func report(bootID string, oldest, latest uint32, events ...ObservedCall) CallEv
 func TestSyncInboundCallsRecordsAndAdvances(t *testing.T) {
 	store := newCallStore()
 	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 2,
-		ObservedCall{Sequence: 1, Number: "15817320262", ObservedAt: observedAt(0)},
-		ObservedCall{Sequence: 2, Number: "+8613334262200", ObservedAt: observedAt(60)},
+		ObservedCall{Sequence: 1, Number: "13000000001", ObservedAt: observedAt(0)},
+		ObservedCall{Sequence: 2, Number: "+8613000000002", ObservedAt: observedAt(60)},
 	)}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
 
@@ -186,7 +186,7 @@ func TestSyncInboundCallsRecordsAndAdvances(t *testing.T) {
 func TestSyncInboundCallsPersistsBeforeAdvancing(t *testing.T) {
 	store := newCallStore()
 	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 1,
-		ObservedCall{Sequence: 1, Number: "15817320262", ObservedAt: observedAt(0)},
+		ObservedCall{Sequence: 1, Number: "13000000001", ObservedAt: observedAt(0)},
 	)}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
 	if _, err := service.SyncInboundCalls(t.Context()); err != nil {
@@ -201,7 +201,7 @@ func TestSyncInboundCallsLeavesThePositionOnAPersistenceFailure(t *testing.T) {
 	store := newCallStore()
 	store.recordErr = errors.New("disk is gone")
 	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 1,
-		ObservedCall{Sequence: 1, Number: "15817320262", ObservedAt: observedAt(0)},
+		ObservedCall{Sequence: 1, Number: "13000000001", ObservedAt: observedAt(0)},
 	)}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
 	result, err := service.SyncInboundCalls(t.Context())
@@ -219,7 +219,7 @@ func TestSyncInboundCallsLeavesThePositionOnAPersistenceFailure(t *testing.T) {
 
 func TestSyncInboundCallsAbsorbsARepeatedEvent(t *testing.T) {
 	store := newCallStore()
-	event := ObservedCall{Sequence: 1, Number: "15817320262", ObservedAt: observedAt(0)}
+	event := ObservedCall{Sequence: 1, Number: "13000000001", ObservedAt: observedAt(0)}
 	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 1, event)}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
 	if _, err := service.SyncInboundCalls(t.Context()); err != nil {
@@ -245,8 +245,8 @@ func TestSyncInboundCallsAbsorbsARepeatedEvent(t *testing.T) {
 // absorbed as a replay of the first call before it.
 func TestSyncInboundCallsSeparatesTheSameSequenceAcrossTwoBoots(t *testing.T) {
 	store := newCallStore()
-	first := report(syncBootID, 1, 1, ObservedCall{Sequence: 1, Number: "15817320262", ObservedAt: observedAt(0)})
-	second := report("aabbccddeeff0011", 1, 1, ObservedCall{Sequence: 1, Number: "13334262200", ObservedAt: observedAt(600)})
+	first := report(syncBootID, 1, 1, ObservedCall{Sequence: 1, Number: "13000000001", ObservedAt: observedAt(0)})
+	second := report("aabbccddeeff0011", 1, 1, ObservedCall{Sequence: 1, Number: "13000000002", ObservedAt: observedAt(600)})
 	reader := &scriptedReader{reports: []CallEventReport{first, second, second}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
 	if _, err := service.SyncInboundCalls(t.Context()); err != nil {
@@ -276,8 +276,8 @@ func TestSyncInboundCallsRereadsFromTheStartAfterARestart(t *testing.T) {
 		BootID: syncBootID, SubscriptionFingerprint: syncSubscriberA, LastSequence: 9,
 	}
 	restarted := report("aabbccddeeff0011", 1, 2,
-		ObservedCall{Sequence: 1, Number: "15817320262", ObservedAt: observedAt(0)},
-		ObservedCall{Sequence: 2, Number: "13334262200", ObservedAt: observedAt(60)},
+		ObservedCall{Sequence: 1, Number: "13000000001", ObservedAt: observedAt(0)},
+		ObservedCall{Sequence: 2, Number: "13000000002", ObservedAt: observedAt(60)},
 	)
 	reader := &scriptedReader{reports: []CallEventReport{restarted, restarted}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
@@ -311,8 +311,8 @@ func TestSyncInboundCallsSkipsEventsFromAPreviousSubscription(t *testing.T) {
 		BootID: syncBootID, SubscriptionFingerprint: syncSubscriberA, LastSequence: 1,
 	}
 	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 3,
-		ObservedCall{Sequence: 2, Number: "15817320262", ObservedAt: observedAt(0)},
-		ObservedCall{Sequence: 3, Number: "13334262200", ObservedAt: observedAt(60)},
+		ObservedCall{Sequence: 2, Number: "13000000001", ObservedAt: observedAt(0)},
+		ObservedCall{Sequence: 3, Number: "13000000002", ObservedAt: observedAt(60)},
 	)}}
 	service := newSyncService(t, store, reader, syncSubscriberB)
 	result, err := service.SyncInboundCalls(t.Context())
@@ -339,7 +339,7 @@ func TestSyncInboundCallsDerivesLossFromItsOwnPositionAndNeverRecordsIt(t *testi
 	}
 	// The bridge no longer holds 3 through 5.
 	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 6, 6,
-		ObservedCall{Sequence: 6, Number: "15817320262", ObservedAt: observedAt(0)},
+		ObservedCall{Sequence: 6, Number: "13000000001", ObservedAt: observedAt(0)},
 	)}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
 	result, err := service.SyncInboundCalls(t.Context())
@@ -381,7 +381,7 @@ func TestSyncInboundCallsDegradesAnUnusableCallerWithoutBlockingLaterEvents(t *t
 	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 3,
 		ObservedCall{Sequence: 1, Number: "", ObservedAt: observedAt(0)},
 		ObservedCall{Sequence: 2, Number: "Unknown", ObservedAt: observedAt(30)},
-		ObservedCall{Sequence: 3, Number: "15817320262", ObservedAt: observedAt(60)},
+		ObservedCall{Sequence: 3, Number: "13000000001", ObservedAt: observedAt(60)},
 	)}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
 	result, err := service.SyncInboundCalls(t.Context())
@@ -401,8 +401,8 @@ func TestSyncInboundCallsDegradesAnUnusableCallerWithoutBlockingLaterEvents(t *t
 func TestSyncInboundCallsAppliesEventsInSequenceOrder(t *testing.T) {
 	store := newCallStore()
 	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 3,
-		ObservedCall{Sequence: 3, Number: "13334262200", ObservedAt: observedAt(60)},
-		ObservedCall{Sequence: 1, Number: "15817320262", ObservedAt: observedAt(0)},
+		ObservedCall{Sequence: 3, Number: "13000000002", ObservedAt: observedAt(60)},
+		ObservedCall{Sequence: 1, Number: "13000000001", ObservedAt: observedAt(0)},
 		ObservedCall{Sequence: 2, Number: "15900000000", ObservedAt: observedAt(30)},
 	)}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
@@ -421,7 +421,7 @@ func TestSyncInboundCallsAppliesEventsInSequenceOrder(t *testing.T) {
 func TestSyncInboundCallsNeverStoresAnEpochArrivalTime(t *testing.T) {
 	store := newCallStore()
 	reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 1,
-		ObservedCall{Sequence: 1, Number: "15817320262"},
+		ObservedCall{Sequence: 1, Number: "13000000001"},
 	)}}
 	service := newSyncService(t, store, reader, syncSubscriberA)
 	if _, err := service.SyncInboundCalls(t.Context()); err != nil {
@@ -472,7 +472,7 @@ func TestSyncInboundCallsDoesNothingWithoutAReaderOrAVoiceLine(t *testing.T) {
 			}
 			service.now = func() time.Time { return time.Unix(1772600000, 0).UTC() }
 			reader := &scriptedReader{reports: []CallEventReport{report(syncBootID, 1, 1,
-				ObservedCall{Sequence: 1, Number: "15817320262", ObservedAt: observedAt(0)},
+				ObservedCall{Sequence: 1, Number: "13000000001", ObservedAt: observedAt(0)},
 			)}}
 			service.UseCallEventReader(reader)
 			result, err := service.SyncInboundCalls(t.Context())

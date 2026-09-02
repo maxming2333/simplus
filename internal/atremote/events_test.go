@@ -37,7 +37,7 @@ func jsonHandler(body string, record *http.Request) http.Handler {
 }
 
 const validReport = `{"bootId":"0f3a1c2b4d5e6f70","latestSequence":7,"oldestSequence":6,` +
-	`"uptimeMs":913442,"events":[{"sequence":6,"number":"15817320262","observedAt":1772505600,"observedMs":900001},` +
+	`"uptimeMs":913442,"events":[{"sequence":6,"number":"13000000001","observedAt":1772505600,"observedMs":900001},` +
 	`{"sequence":7,"number":"","observedAt":0,"observedMs":913001}]}`
 
 func TestCallEventsReadsTheRingAndCarriesTheCursorAndBound(t *testing.T) {
