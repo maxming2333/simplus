@@ -27,3 +27,25 @@ Added internal/atremote (HTTP implementation of attransport.Opener/Session with 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: Model-agnostic 3GPP cellular SMS + prompted-payload transport
+
+**Date**: 2026-09-02
+**Task**: Model-agnostic 3GPP cellular SMS + prompted-payload transport
+**Package**: core
+**Branch**: `feat/remote-at-bridge`
+
+### Summary
+
+Added attransport.PromptSession/Exchange (tty + bridge) so the 27.005 submit-prompt interaction works over any control transport, with a strict not-dispatched vs uncertain split. Renamed qdc507sms to standardsms and parameterized its model adapter (pure move, proven by the existing 1400-line QDC507 suite). Added standardsms.OpenerTransport over the shared AT seam, modemadapter.ML307ASMS with sms-control deliberately left unverified, and replaced the bridge source's SMSAdapter inference with an adapter-declared LocalTTYAdapter marker. simplus-agent now resolves the transport before composing adapters. Bridged HIL-0: 412/200 prompt classification, full AT+CMGW exchange, and PDU-mode/CPMS/CMGL driven by the production SMS driver.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1d93a4f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
