@@ -18,6 +18,13 @@ import (
 // because it is the one failure that must not advance a read position.
 var ErrPersistence = errors.New("call record persistence failed")
 
+// ErrCallEventsUnsupported means this Line's modem keeps no ring of observed
+// calls. It is a supported configuration, not a fault: a locally attached modem's
+// caller-line notifications are gone before anything could poll for them. The
+// sweep treats it as "nothing to read here" so it is not retried and logged every
+// two seconds forever.
+var ErrCallEventsUnsupported = errors.New("call events are unsupported for this line")
+
 // ObservedCall is one inbound call a modem saw and nothing answered.
 type ObservedCall struct {
 	Sequence uint32
@@ -108,6 +115,9 @@ func (service *Service) SyncInboundCalls(ctx context.Context) (InboundCallSyncRe
 		}
 		lineResult, lineErr := service.syncLineCalls(ctx, target)
 		result.add(lineResult)
+		if errors.Is(lineErr, ErrCallEventsUnsupported) {
+			continue
+		}
 		if lineErr != nil {
 			failures = errors.Join(failures, lineErr)
 		}

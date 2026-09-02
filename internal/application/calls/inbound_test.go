@@ -518,3 +518,18 @@ func TestObservedCallIdentityIsStableAndScopedByBoot(t *testing.T) {
 		t.Fatalf("identity length is out of the storable range: %q", first)
 	}
 }
+
+func TestSyncInboundCallsTreatsAModemWithNoRingAsNothingToRead(t *testing.T) {
+	// A locally attached modem is a supported configuration. Reporting it as a
+	// failure would log and retry every two seconds for the life of the deployment.
+	store := newCallStore()
+	reader := &scriptedReader{err: ErrCallEventsUnsupported}
+	service := newSyncService(t, store, reader, syncSubscriberA)
+	result, err := service.SyncInboundCalls(t.Context())
+	if err != nil {
+		t.Fatalf("err = %v, want a modem with no ring treated as nothing to read", err)
+	}
+	if result.LinesPolled != 0 || len(store.cursors) != 0 {
+		t.Fatalf("result = %+v cursors = %v", result, store.cursors)
+	}
+}

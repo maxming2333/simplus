@@ -89,6 +89,7 @@ func run() int {
 	var inventoryService *inventory.Service
 	var hardwareAgentClient *agentapi.Client
 	var messageTransports []messaging.SMSTransport
+	var callEventGateway *calls.AgentCallEventGateway
 	mihomoSupervisorSocket := os.Getenv("SIMPLUS_MIHOMO_SUPERVISOR_SOCKET")
 	var voWiFiSupervisor *vowifisupervisor.Client
 	switch cfg.Runtime.Backend {
@@ -138,6 +139,18 @@ func run() int {
 			return 2
 		}
 		messageTransports = append(messageTransports, messaging.AgentNativeSMSTransport(agentSMSGateway, agentSMSGateway))
+		// Inbound call notifications are only available where the agent advertises
+		// them, which today means a bridged modem. A locally attached one keeps no
+		// ring of observed calls, so composing this without the feature would poll
+		// for something that cannot exist.
+		if containsFeature(hello.Features, agentapi.FeatureCallEvents) {
+			callEventGateway, gatewayErr = calls.NewAgentCallEventGateway(agentClient, hello.AgentInstanceID)
+			if gatewayErr != nil {
+				logger.Error("hardware Agent call event gateway configuration rejected", "error", gatewayErr)
+				_ = stores.Close()
+				return 2
+			}
+		}
 		if mihomoSupervisorSocket != "" {
 			voWiFiSupervisor, clientErr = vowifisupervisor.NewClient(mihomoSupervisorSocket)
 			if clientErr != nil {
@@ -202,13 +215,23 @@ func run() int {
 	}
 	var callService *calls.Service
 	var euiccService *euicc.Service
-	if cfg.Runtime.Backend == config.BackendSimulator {
+	// The call service also exists on the hardware backend when the agent can
+	// report observed inbound calls: that is where the records have to land.
+	if cfg.Runtime.Backend == config.BackendSimulator || callEventGateway != nil {
 		callService, err = calls.New(ctx, stores, managedLineService)
 		if err != nil {
 			logger.Error("calls initialization failed", "error", err)
 			_ = stores.Close()
 			return 1
 		}
+		if callEventGateway != nil {
+			// Guarded rather than assigned unconditionally: a nil pointer placed in
+			// an interface is not a nil interface, and the sweep would then run
+			// against nothing.
+			callService.UseCallEventReader(callEventGateway)
+		}
+	}
+	if cfg.Runtime.Backend == config.BackendSimulator {
 		euiccService, err = euicc.New(stores)
 		if err != nil {
 			logger.Error("eUICC initialization failed", "error", err)
@@ -322,6 +345,12 @@ func run() int {
 			logger.Warn("inbound SMS notification failed", "error", report.NotificationError)
 		}
 	})
+	if callService != nil && callEventGateway != nil {
+		// Reuses the same two-second cadence as message synchronization rather than
+		// adding a timer: inbound messages and inbound calls are the same "poll,
+		// persist, advance" shape, and one interval already bounds the load.
+		go runInboundCallSync(ctx, callService, 2*time.Second, logger)
+	}
 	if agentChangeCoordinator != nil {
 		go agentChangeCoordinator.Run(ctx, func(report inventory.AgentChangeReport) {
 			switch report.Operation {
@@ -459,6 +488,19 @@ func managementListenerNetwork(address string) string {
 	return "tcp6"
 }
 
+// containsFeature reports whether the agent advertises a capability. Optional
+// capabilities are discovered rather than assumed: an agent without a configured
+// bridge does not advertise call events, and polling for them would ask for
+// something that cannot exist.
+func containsFeature(features []string, want string) bool {
+	for _, feature := range features {
+		if feature == want {
+			return true
+		}
+	}
+	return false
+}
+
 func requireTypedHardwareAgent(hello agentapi.Hello) error {
 	rfControl, equipmentIdentity, sms := false, false, false
 	for _, feature := range hello.Features {
@@ -477,4 +519,48 @@ func requireTypedHardwareAgent(hello agentapi.Hello) error {
 		return errors.New("Agent does not advertise the required RF, equipment identity, and SMS features")
 	}
 	return nil
+}
+
+// runInboundCallSync sweeps observed inbound calls until the context ends.
+//
+// Every warning here carries counts only. Caller numbers belong in the call
+// history this produces, not in a log: the record is the product, and duplicating
+// it into logs would spread it somewhere with different retention and access.
+func runInboundCallSync(ctx context.Context, service *calls.Service, interval time.Duration, logger *slog.Logger) {
+	const sweepTimeout = 20 * time.Second
+	for {
+		sweepCtx, cancel := context.WithTimeout(ctx, sweepTimeout)
+		result, err := service.SyncInboundCalls(sweepCtx)
+		cancel()
+		if err != nil {
+			logger.Warn("inbound call synchronization failed", "error", err)
+		}
+		if result.BridgeRestarts != 0 {
+			logger.Warn("bridge restarted; inbound call notifications not yet read were lost with its memory",
+				"bridges", result.BridgeRestarts)
+		}
+		if result.SubscriptionChanges != 0 {
+			logger.Warn("SIM changed; inbound call notifications recorded before the change were skipped rather than attributed to the new subscription",
+				"bridges", result.SubscriptionChanges)
+		}
+		if result.LostEvents != 0 {
+			// These are calls that really happened and can never be recovered. It
+			// stays a warning and never becomes a record: one with no number and no
+			// time would be indistinguishable from a real missed call.
+			logger.Warn("inbound call notifications were overwritten before they could be read",
+				"calls", result.LostEvents)
+		}
+		if result.Degraded != 0 {
+			logger.Warn("inbound calls were observed without a usable caller address and were not recorded",
+				"calls", result.Degraded)
+		}
+		if result.Recorded != 0 {
+			logger.Info("inbound calls recorded", "calls", result.Recorded, "already_known", result.AlreadyKnown)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
 }
