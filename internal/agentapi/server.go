@@ -44,23 +44,26 @@ func (response *ErrorResponse) Is(target error) bool {
 }
 
 func NewHandler(monitor *Monitor, commands *CommandService, logger *slog.Logger, smsBackends ...SMSBackend) http.Handler {
-	return newHandler(monitor, commands, nil, nil, logger, false, smsBackends...)
+	return newHandler(monitor, commands, nil, nil, nil, logger, false, smsBackends...)
 }
 
 // NewReadOnlyHardwareHandler is the production V1 hardware boundary. Its
 // signature deliberately provides no way to inject command or SMS backends.
 func NewReadOnlyHardwareHandler(monitor *Monitor, logger *slog.Logger) http.Handler {
-	return newHandler(monitor, nil, nil, nil, logger, true)
+	return newHandler(monitor, nil, nil, nil, nil, logger, true)
 }
 
-// NewManagedHardwareHandler exposes read-only discovery plus the narrowly
-// typed RF, equipment-identity, and optional SMS services. It still has no
-// route for arbitrary commands, paths, calls, or eUICC mutations.
-func NewManagedHardwareHandler(monitor *Monitor, rf *RFService, identity *EquipmentIdentityService, logger *slog.Logger, smsBackends ...SMSBackend) http.Handler {
-	return newHandler(monitor, nil, rf, identity, logger, false, smsBackends...)
+// NewManagedHardwareHandler exposes read-only discovery plus the narrowly typed
+// RF, equipment-identity, and optional SMS and call-event services. It still has
+// no route for arbitrary commands, paths, or eUICC mutations, and none for
+// changing call state: the call surface here is a single bounded read of calls
+// the modem already observed, so the system can know who called and when. It
+// cannot place, answer, reject or end a call.
+func NewManagedHardwareHandler(monitor *Monitor, rf *RFService, identity *EquipmentIdentityService, callEvents *CallEventsService, logger *slog.Logger, smsBackends ...SMSBackend) http.Handler {
+	return newHandler(monitor, nil, rf, identity, callEvents, logger, false, smsBackends...)
 }
 
-func newHandler(monitor *Monitor, commands *CommandService, rf *RFService, identity *EquipmentIdentityService, logger *slog.Logger, hardwareReadOnly bool, smsBackends ...SMSBackend) http.Handler {
+func newHandler(monitor *Monitor, commands *CommandService, rf *RFService, identity *EquipmentIdentityService, callEvents *CallEventsService, logger *slog.Logger, hardwareReadOnly bool, smsBackends ...SMSBackend) http.Handler {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -85,6 +88,9 @@ func newHandler(monitor *Monitor, commands *CommandService, rf *RFService, ident
 		}
 		if smsBackend != nil {
 			features = append(features, FeatureSMS)
+		}
+		if callEvents != nil {
+			features = append(features, FeatureCallEvents)
 		}
 		writeJSON(w, http.StatusOK, Hello{
 			Protocol: ProtocolName, ProtocolVersion: ProtocolVersion, AgentInstanceID: monitor.InstanceID(), Agent: buildinfo.Current(),
@@ -248,6 +254,9 @@ func newHandler(monitor *Monitor, commands *CommandService, rf *RFService, ident
 			w.Header().Set("Pragma", "no-cache")
 			writeJSON(w, http.StatusOK, response)
 		})
+	}
+	if callEvents != nil {
+		registerCallEventsHandler(mux, callEvents, logger)
 	}
 	if smsBackend != nil {
 		registerSMSHandlers(mux, monitor, smsBackend, logger)

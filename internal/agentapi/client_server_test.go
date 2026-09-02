@@ -81,7 +81,7 @@ func TestManagedHardwareHandlerDisclosesEquipmentIdentityOnlyThroughNoStoreRoute
 	identity := NewEquipmentIdentityService(monitor, &fakeEquipmentIdentityBackend{observation: EquipmentIdentityObservation{
 		IMEI: "490154203237518", Fingerprint: strings.Repeat("a", 64),
 	}})
-	handler := NewManagedHardwareHandler(monitor, nil, identity, nil)
+	handler := NewManagedHardwareHandler(monitor, nil, identity, nil, nil)
 	body, err := json.Marshal(EquipmentIdentityReadRequest{
 		AgentInstanceID: snapshot.AgentInstanceID, SnapshotGeneration: snapshot.Generation,
 		SnapshotRevision: snapshot.Revision, DeviceID: snapshot.Devices[0].ID,
@@ -105,7 +105,7 @@ func TestManagedHardwareHandlerAdvertisesAndRoutesSMSOnlyWhenBackendIsComposed(t
 	if _, err := monitor.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	withoutSMS := NewManagedHardwareHandler(monitor, nil, nil, nil)
+	withoutSMS := NewManagedHardwareHandler(monitor, nil, nil, nil, nil)
 	helloResponse := httptest.NewRecorder()
 	withoutSMS.ServeHTTP(helloResponse, httptest.NewRequest(http.MethodGet, "/v1/hello", nil))
 	var hello Hello
@@ -122,7 +122,7 @@ func TestManagedHardwareHandlerAdvertisesAndRoutesSMSOnlyWhenBackendIsComposed(t
 		t.Fatalf("uncomposed SMS route status=%d", notFound.Code)
 	}
 
-	withSMS := NewManagedHardwareHandler(monitor, nil, nil, nil, NewDefaultSimulatorSMSBackend())
+	withSMS := NewManagedHardwareHandler(monitor, nil, nil, nil, nil, NewDefaultSimulatorSMSBackend())
 	helloResponse = httptest.NewRecorder()
 	withSMS.ServeHTTP(helloResponse, httptest.NewRequest(http.MethodGet, "/v1/hello", nil))
 	if err := json.Unmarshal(helloResponse.Body.Bytes(), &hello); err != nil {

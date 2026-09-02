@@ -134,6 +134,24 @@ func (client *Client) ReadEquipmentIdentity(ctx context.Context, request Equipme
 	return response, nil
 }
 
+// ReadCallEvents reads the inbound calls a device's bridge has observed since the
+// caller's cursor. It validates the reply again after receiving it: the server
+// already validated its own backend, and a report that advanced a cursor
+// incorrectly could not be walked back.
+func (client *Client) ReadCallEvents(ctx context.Context, request CallEventsRequest) (CallEventsResponse, error) {
+	if err := validateCallEventsRequest(request); err != nil {
+		return CallEventsResponse{}, err
+	}
+	var response CallEventsResponse
+	if err := client.request(ctx, http.MethodPost, "/v1/calls/events", request, &response); err != nil {
+		return CallEventsResponse{}, err
+	}
+	if err := validateCallEventsResponse(response, request); err != nil {
+		return CallEventsResponse{}, fmt.Errorf("invalid call events response: %w", err)
+	}
+	return response, nil
+}
+
 func (client *Client) ListSMS(ctx context.Context, request SMSListRequest) (SMSListResponse, error) {
 	if err := validateSMSListRequest(request); err != nil {
 		return SMSListResponse{}, err

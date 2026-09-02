@@ -243,7 +243,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	server := &http.Server{
-		Handler: agentapi.NewManagedHardwareHandler(monitor, rfService, equipmentIdentityService, logger, smsBackend), ReadHeaderTimeout: 3 * time.Second,
+		Handler: agentapi.NewManagedHardwareHandler(monitor, rfService, equipmentIdentityService, callEventsService, logger, smsBackend), ReadHeaderTimeout: 3 * time.Second,
 		ReadTimeout: 15 * time.Second, WriteTimeout: agentapi.SMSRequestTimeout + 10*time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
 	var simAKAServer *http.Server
