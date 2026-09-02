@@ -54,6 +54,26 @@ POST {base}/at/command
 - 响应体总长上限 8192 字节，行数上限 256。Agent 会拒绝超限响应；
 - 回显、空行和控制字符由 Agent 再规范化一次，但桥不应刻意依赖这一点。
 
+### 提示符类命令
+
+```http
+POST {base}/at/exchange
+{"session":"<token>","command":"AT+CMGS=23","payloadHex":"<载荷字节的十六进制>","timeoutMs":15000}
+```
+
+3GPP TS 27.005 里有一类命令不是请求/响应：`AT+CMGS`（以及 `AT+CMGW`）先回一个 `>` 提示符，调用方再写入 PDU 载荷。桥必须把这三步做成一个原子操作：写命令 → 等 `>` → 写载荷 → 读到终止状态。
+
+载荷用十六进制传输，因为它是二进制的——3GPP 提交载荷以控制字符 `0x1A` 结尾，无法直接放进 JSON。桥解码后写入原始字节。
+
+| 响应 | 含义 | Agent 处理 |
+| --- | --- | --- |
+| `200` + `{"lines":[...]}` | 拿到终止状态 | 正常返回 |
+| `412` | **确定载荷未发出**（没等到提示符、模组在提示符前返回错误、串口拿不到） | 判定操作无副作用，可安全重试 |
+| `504` | 载荷已写出但没等到终止状态 | 结果不确定，**不得重试** |
+| `410` | token 陈旧 | 与 `/at/command` 一致 |
+
+`412` 与 `504` 的区分不是锦上添花：混为一谈会导致短信重复发送。桥必须只在**确知载荷未写入串口**时返回 `412`。
+
 ### 关闭会话
 
 ```http
@@ -111,6 +131,8 @@ Agent 通过 `-remote-at-config` 或 `SIMPLUS_AGENT_REMOTE_AT_CONFIG` 读取一�
 ## 参考实现与已验证范围
 
 参考桥固件是 [esp32-sms-forwarding](https://github.com/maxming2333/esp32-sms-forwarding) 的 `/at/session`、`/at/command` 端点。它在会话期间拒绝自身网页调试入口（`GET /at`、`POST /ping`）的 AT 注入，因为那两条路径可以插入任意命令或直接独占串口。
+
+已在真机验证：`/at/exchange` 的两条关键分支——`AT` 带载荷正确返回 `412`（载荷未发出），`AT+CMGW` 的完整提示符交互返回 `200` 与 `+CMGW: <index>`（只写模组存储，不发送，随后已删除清理）。蜂窝短信入站链路 `AT+CMGF=0` / `AT+CPMS="SM","SM","SM"` / `AT+CMGL=4` 经桥由 Simplus 真实 SMS driver 驱动通过。
 
 已在真机验证（读)：一枚 ML307A-DSLN-MTSH1S00 经桥完成完整只读综合探测——`state=complete`、型号/IMEI 指纹、SIM present+ready、SIM 身份指纹与归属 MCC-MNC、CSQ 信号与三域注册状态；以及 `AT+CCHO` → `AT+CGLA` → `AT+CCHC` 的完整粘性逻辑通道序列，关闭后通道号可被重新分配。会话独占、陈旧 token 拒绝、命令越界拒绝、TTL 自动回收均按契约表现。仍未验证的部分见 [`compatibility.md`](compatibility.md)。
 

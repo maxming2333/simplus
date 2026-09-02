@@ -87,6 +87,10 @@ AT 实现进一步分成三层：`internal/attransport` 只负责 Linux tty 的�
 
 控制 transport 因此可以有第二个实现，而不影响上层。`internal/atremote` 用 HTTP 实现同一个 `attransport.Opener`/`Session` 契约，目标是一台独占持有模组 AT 串口的远程桥；它复刻本机 tty 的全部边界（命令 1024 字节、响应 8192 字节、必须出现终止状态、剥离回显与控制字符），把失败归入既有的 `OpenError` 分类，并且不含任何 AT 字面量。会话粘性由桥下发的 session token 表达，因为 SIM AKA 的逻辑通道开/APDU/关必须落在同一条串口会话上。装配点是 `cmd/simplus-agent`：它按控制端点定位符前缀确定性地路由，带桥前缀走 HTTP、其余走本机 tty，选中的 transport 失败即返回错误，绝不回退到另一条。定位符只出现在 `agentapi.Endpoint.Node`（本机模组在同一字段放 `/dev/ttyUSB2`），不携带 host、端口或凭据，且有源码扫描测试保证除 transport 与装配点外无任何包引用该前缀——上层无法区分本机与桥接。桥设备由 `hardwareprobe.Scanner.ExtraDevices` 合成为普通 `DeviceReport`，其 interface number 通过询问 adapter 得到而非硬编码；由于桥没有受控 HIL 证据，默认把所有 `observed` 能力降级为 `unverified`，因此桥设备可探测但不产生 modem function、Line 或 SIM 鉴权，只有运维显式背书才保留 adapter 证据并记录为明确例外。契约与部署叠加见 [`remote-at-bridge.md`](remote-at-bridge.md)。
 
+`attransport` 另外提供一个可选的 `PromptSession.Exchange`，用于 3GPP TS 27.005 中「命令 → `>` 提示符 → 载荷 → 终止状态」这类非请求/响应交互。识别提示符属于分帧，与 `HasTerminalResponse` 识别 OK/ERROR 同级；命令与载荷内容仍归型号 adapter。不支持该分帧的 transport 不实现它，`PromptExchange` 以一个稳定 sentinel fail closed，而不是猜测。失败分为「确知载荷未发出」（可安全重试）与「结果不确定」（不得重试）两类——短信场景下混淆这两者会重复发送。
+
+通用 3GPP PDU 模式短信机制（`CMGF/CPMS/CMGL/CMGR/CMGD/CMGS` 转录、durable recovery store、提交/确认状态机）位于 `internal/modemadapter/standardsms`，与 `standardat` 同级，由型号 adapter 组合而非各自重写。型号只提供 profile 身份与控制端点解析。transport 有两个可选实现：`TTYTransport`（已通过蜂窝短信 HIL 的型号继续使用）与 `OpenerTransport`（走共享 AT seam，因此同一 driver 既能驱动本机模组也能驱动桥接模组）。两者是替代关系，不互为回退。共用 driver 不等于共用证据：每个型号的 `sms-control` 仍需自己的 HIL。
+
 #### 分层控制与型号解耦
 
 每个控制层只能依赖下一级公开的类型化能力契约，不能依赖其具体型号或实现。依赖方向固定为：

@@ -35,10 +35,15 @@
 | Compose 叠加只放宽网络且不增加特权 | Fixture |
 | 经真实桥固件的只读综合探测（型号/IMEI 指纹、SIM present+ready、SIM 身份指纹与归属 MCC-MNC、CSQ、三域注册状态） | HIL-0 |
 | 经真实桥固件的逻辑通道粘性序列（通道打开 → APDU 交换 → 关闭，关闭后通道可重新分配） | HIL-0 |
+| 提示符类命令（命令 → `>` → 载荷 → 终止状态）经桥的原子交换，含「载荷未发出」与「结果不确定」的状态分类 | HIL-0 |
+| ML307A 蜂窝短信入站链路（PDU 模式、存储选择、存储列举）经桥由生产 SMS driver 驱动 | HIL-0 |
+| ML307A 蜂窝短信出站提交（`AT+CMGS`） | 尚未验证（需已驻网的 SIM） |
 
 HIL-0 证据取自一枚 ML307A-DSLN-MTSH1S00 与一台参考 ESP32 桥固件，可通过 `SIMPLUS_REMOTE_AT_HIL_CONFIG` 重放（只读，不含写入/射频/SIM 变更）。
 
-尚未验证的部分包括：长时间会话稳定性、桥重启或掉线后的恢复行为、经桥完成的完整 SIM AKA 鉴权与 Host VoWiFi 接入、经桥的短信收发、多桥并发。
+ML307A 蜂窝短信：通用 3GPP TS 27.005 PDU 模式 driver、durable recovery store 与提交/确认状态机由 `internal/modemadapter/standardsms` 与首个通过蜂窝短信 HIL 的型号共用，共用代码不等于共用证据——ML307A 自身的 `sms-control` 保持 `unverified`，因此 `internal/application/inventory` 不会为该型号声明短信能力。要提升为 `observed`，需要一张已驻网的 SIM 完成真实收发 HIL 并记录在本文。
+
+尚未验证的部分包括：ML307A 真实蜂窝短信收发（入站投递与出站提交）、长时间会话稳定性、桥重启或掉线后的恢复行为、经桥完成的完整 SIM AKA 鉴权与 Host VoWiFi 接入、经桥的短信收发、多桥并发。
 
 能力证据规则：型号 adapter 的 `observed` 来自本机直连模组的受控 HIL，不迁移到第三方桥。默认策略把桥设备上所有 `observed` 降级为 `unverified`，因此桥设备只作为物理设备出现，不产生 modem function、SIM 卡槽或 Line，SIM 鉴权返回 `SIM_AKA_UNSUPPORTED`；探测不受影响。配置项 `attestCapabilities` 保留 adapter 状态并在证据文本中标注 operator-attested，这是运维背书而非验证证据，属于记录在案的显式例外。契约细节见 [`remote-at-bridge.md`](remote-at-bridge.md)。
 
