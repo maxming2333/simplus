@@ -18,6 +18,10 @@ import (
 const (
 	maximumCommandLength = 1024
 	maximumResponseSize  = 8192
+
+	// maximumPromptPayload bounds one prompted submission. The largest shape in
+	// use is a single 3GPP SMS submit PDU in hexadecimal plus its terminator.
+	maximumPromptPayload = 1024
 )
 
 type platformOpener struct{}
