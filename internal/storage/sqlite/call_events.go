@@ -10,33 +10,22 @@ import (
 	"github.com/leonfox28/simplus/internal/domain/call"
 )
 
-// CallEventCursor is a consumer's durable read position in one bridge's ring.
-type CallEventCursor struct {
-	BootID string
-	// SubscriptionFingerprint is the subscription the recorded events were
-	// attributed to. It scopes the position for the same reason BootID does: the
-	// ring outlives a SIM change, so entries still held did not arrive under a
-	// different subscription than the one they would now be attributed to.
-	SubscriptionFingerprint string
-	LastSequence            uint32
-}
-
 // CallEventCursorFor reads a device's stored position. A missing row is not an
 // error: it is the correct starting state for a device never polled before.
-func (set *Set) CallEventCursorFor(ctx context.Context, deviceID string) (CallEventCursor, bool, error) {
+func (set *Set) CallEventCursorFor(ctx context.Context, deviceID string) (call.EventCursor, bool, error) {
 	if set == nil || set.Calls == nil || deviceID == "" {
-		return CallEventCursor{}, false, errors.New("invalid call event cursor request")
+		return call.EventCursor{}, false, errors.New("invalid call event cursor request")
 	}
-	var cursor CallEventCursor
+	var cursor call.EventCursor
 	var sequence int64
 	err := set.Calls.QueryRowContext(ctx, `
 SELECT boot_id, subscription_fingerprint, last_sequence FROM call_event_cursors WHERE device_id = ?
 `, deviceID).Scan(&cursor.BootID, &cursor.SubscriptionFingerprint, &sequence)
 	if errors.Is(err, sql.ErrNoRows) {
-		return CallEventCursor{}, false, nil
+		return call.EventCursor{}, false, nil
 	}
 	if err != nil {
-		return CallEventCursor{}, false, fmt.Errorf("read call event cursor: %w", err)
+		return call.EventCursor{}, false, fmt.Errorf("read call event cursor: %w", err)
 	}
 	cursor.LastSequence = uint32(sequence)
 	return cursor, true, nil
@@ -47,7 +36,7 @@ SELECT boot_id, subscription_fingerprint, last_sequence FROM call_event_cursors 
 // Callers must only reach here after the records for those events are durable.
 // A crash between the two re-reads the events, and their stable identity absorbs
 // the repeat; saving first would lose them with no way to notice.
-func (set *Set) SaveCallEventCursor(ctx context.Context, deviceID string, cursor CallEventCursor, at time.Time) error {
+func (set *Set) SaveCallEventCursor(ctx context.Context, deviceID string, cursor call.EventCursor, at time.Time) error {
 	if set == nil || set.Calls == nil || deviceID == "" {
 		return errors.New("invalid call event cursor")
 	}

@@ -40,6 +40,9 @@ type Repository interface {
 	GetCallByID(context.Context, string) (call.Record, bool, error)
 	HasActiveCallForLine(context.Context, string) (bool, error)
 	ReconcileCalls(context.Context, string, time.Time) (int64, error)
+	CallEventCursorFor(context.Context, string) (call.EventCursor, bool, error)
+	SaveCallEventCursor(context.Context, string, call.EventCursor, time.Time) error
+	RecordObservedInboundCall(context.Context, call.Record) (call.Record, bool, error)
 }
 type LineSource interface {
 	Topology(context.Context) (inventory.Topology, error)
@@ -50,6 +53,20 @@ type Service struct {
 	random     io.Reader
 	now        func() time.Time
 	mu         sync.Mutex
+
+	// events reads observed inbound calls. It is nil unless a reader is attached,
+	// in which case inbound call synchronization does nothing at all.
+	events CallEventReader
+}
+
+// UseCallEventReader attaches the source of observed inbound calls. It is
+// separate from construction because a deployment with no bridge has no such
+// source, and the service must be fully usable without one.
+func (service *Service) UseCallEventReader(reader CallEventReader) {
+	if service == nil {
+		return
+	}
+	service.events = reader
 }
 
 func New(ctx context.Context, repository Repository, lines LineSource) (*Service, error) {

@@ -28,7 +28,7 @@ func openTestSet(t *testing.T) *Set {
 func observedCall(id, operation, number string, at time.Time) call.Record {
 	return call.Record{
 		ID: id, OperationID: operation, LineID: "line_0123456789012345678901",
-		RemoteAddress: number, EndReason: "CALL_NOT_ANSWERED", CreatedAt: at, UpdatedAt: at,
+		RemoteAddress: number, EndReason: call.ReasonNotAnswered, CreatedAt: at, UpdatedAt: at,
 	}
 }
 
@@ -40,7 +40,7 @@ func TestCallEventCursorStartsAbsentAndRoundTrips(t *testing.T) {
 	if _, found, err := set.CallEventCursorFor(ctx, cursorDeviceID); err != nil || found {
 		t.Fatalf("found = %v, err = %v, want an absent cursor", found, err)
 	}
-	stored := CallEventCursor{BootID: cursorBootID, SubscriptionFingerprint: cursorSubscriber, LastSequence: 7}
+	stored := call.EventCursor{BootID: cursorBootID, SubscriptionFingerprint: cursorSubscriber, LastSequence: 7}
 	if err := set.SaveCallEventCursor(ctx, cursorDeviceID, stored, time.Unix(1772505600, 0)); err != nil {
 		t.Fatalf("SaveCallEventCursor: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestCallEventCursorStartsAbsentAndRoundTrips(t *testing.T) {
 		t.Fatalf("loaded = %+v found = %v err = %v, want %+v", loaded, found, err, stored)
 	}
 	// Advancing overwrites in place rather than accumulating rows.
-	advanced := CallEventCursor{BootID: cursorBootID, SubscriptionFingerprint: cursorSubscriber, LastSequence: 12}
+	advanced := call.EventCursor{BootID: cursorBootID, SubscriptionFingerprint: cursorSubscriber, LastSequence: 12}
 	if err := set.SaveCallEventCursor(ctx, cursorDeviceID, advanced, time.Unix(1772505700, 0)); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
@@ -72,13 +72,13 @@ func TestCallEventCursorIsScopedByBootAndSubscription(t *testing.T) {
 	set := openTestSet(t)
 	ctx := t.Context()
 	if err := set.SaveCallEventCursor(ctx, cursorDeviceID,
-		CallEventCursor{BootID: cursorBootID, SubscriptionFingerprint: cursorSubscriber, LastSequence: 7},
+		call.EventCursor{BootID: cursorBootID, SubscriptionFingerprint: cursorSubscriber, LastSequence: 7},
 		time.Unix(1772505600, 0)); err != nil {
 		t.Fatal(err)
 	}
 	// A restart resets the sequence to zero, so a stored position from a previous
 	// boot must be recognizable as belonging to one.
-	restarted := CallEventCursor{BootID: "aabbccddeeff0011", SubscriptionFingerprint: cursorSubscriber}
+	restarted := call.EventCursor{BootID: "aabbccddeeff0011", SubscriptionFingerprint: cursorSubscriber}
 	if err := set.SaveCallEventCursor(ctx, cursorDeviceID, restarted, time.Unix(1772505700, 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestCallEventCursorIsScopedByBootAndSubscription(t *testing.T) {
 		t.Fatalf("loaded = %+v, want the reset position %+v", loaded, restarted)
 	}
 	// A different subscription is likewise a different scope, even at the same boot.
-	swapped := CallEventCursor{BootID: "aabbccddeeff0011", SubscriptionFingerprint: "ff" + cursorSubscriber[2:], LastSequence: 3}
+	swapped := call.EventCursor{BootID: "aabbccddeeff0011", SubscriptionFingerprint: "ff" + cursorSubscriber[2:], LastSequence: 3}
 	if err := set.SaveCallEventCursor(ctx, cursorDeviceID, swapped, time.Unix(1772505800, 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestCallEventCursorIsScopedByBootAndSubscription(t *testing.T) {
 func TestCallEventCursorRejectsMalformedScopes(t *testing.T) {
 	set := openTestSet(t)
 	ctx := t.Context()
-	for name, cursor := range map[string]CallEventCursor{
+	for name, cursor := range map[string]call.EventCursor{
 		"short boot id":         {BootID: "0f3a", SubscriptionFingerprint: cursorSubscriber},
 		"missing boot id":       {SubscriptionFingerprint: cursorSubscriber},
 		"short fingerprint":     {BootID: cursorBootID, SubscriptionFingerprint: "abc"},
@@ -116,7 +116,7 @@ func TestCallEventCursorRejectsMalformedScopes(t *testing.T) {
 			}
 		})
 	}
-	if err := set.SaveCallEventCursor(ctx, "", CallEventCursor{BootID: cursorBootID, SubscriptionFingerprint: cursorSubscriber}, time.Now()); err == nil {
+	if err := set.SaveCallEventCursor(ctx, "", call.EventCursor{BootID: cursorBootID, SubscriptionFingerprint: cursorSubscriber}, time.Now()); err == nil {
 		t.Fatal("the store accepted a cursor with no device")
 	}
 }
@@ -140,7 +140,7 @@ func TestRecordObservedInboundCallIsTerminalAndComplete(t *testing.T) {
 	}
 	// Unlike CreateCall, the reason is written by the same statement rather than
 	// left for a second write to fill in.
-	if stored.EndReason != "CALL_NOT_ANSWERED" {
+	if stored.EndReason != call.ReasonNotAnswered {
 		t.Fatalf("end reason = %q, want it written with the record", stored.EndReason)
 	}
 	if stored.AnsweredAt != nil {
