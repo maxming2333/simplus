@@ -87,6 +87,28 @@ DELETE {base}/at/session
 
 `RING` / `+CLIP` 是纯实时主动上报,任何地方都没有存储——那一刻没人接就永久消失。桥固件在监听并走自己的推送管道;Simplus 侧没有生产级通话能力(`CellularVoice` 与 `DigitalVoiceMedia` 在 inventory 映射里是硬编码 false,`application/calls` 只在 Simulator backend 装配),因此不接收来电。
 
+### 来电事件端点
+
+```http
+GET {base}/events/calls?after=<seq>&limit=<n>
+  -> 200 {"latestSequence":12,"dropped":0,"uptimeMs":39460,
+          "events":[{"sequence":12,"number":"+861...","observedAt":1756800000,"observedMs":38210}]}
+```
+
+这不在 `/at/*` 命名空间下,因为它不是 AT 中继——桥自己缓冲了本来会消失的事件。
+
+| 字段 | 含义 |
+| --- | --- |
+| `sequence` | 单调递增,重启归零。消费方的游标 |
+| `latestSequence` | 已产生事件总数 |
+| `dropped` | 因缓冲满被覆盖的事件数 |
+| `observedAt` | 墙钟秒;**为 0 表示记录时未同步**,消费方须回落到自己的接收时刻,不可当成 1970 年 |
+| `observedMs` | 记录时刻的设备运行毫秒,用于计算相对时间差 |
+
+`latestSequence` 与 `dropped` 是必需的:只看 `events` 数组无法区分「这段时间没人打来」和「打来了但缓冲已被覆盖」。参考固件缓冲 32 条,满时丢最旧——来电是瞬时事件,保留最近的比保留最早的有用。
+
+桥必须把记录点放在它自己推送通知的同一个汇聚点上,这样事件与推送严格同源:不会出现「推送了但外部系统查不到」或反之。
+
 **不要把来电伪装成短信塞进存储列举的结果里。** 那需要桥伪造合法的 SMS-DELIVER PDU、分配不与模组冲突的假存储索引、并连带拦截该索引的读取与删除;伪造索引还会与 `PDUDigest`(防索引复用误删)正面冲突。更根本的是它让 transport 变成数据源,上层会收到没有任何模组产生过的数据,排查时必然把人带错方向。
 
 若将来确实要让 Simplus 看到来电,正确做法是建模成独立的通话事件能力(agentapi 上一条有界读操作 + 领域事件),并先立决策记录。
