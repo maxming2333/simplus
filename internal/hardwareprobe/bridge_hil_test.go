@@ -11,6 +11,7 @@ import (
 	"github.com/leonfox28/simplus/internal/atremote"
 	"github.com/leonfox28/simplus/internal/attransport"
 	"github.com/leonfox28/simplus/internal/modemadapter"
+	"github.com/leonfox28/simplus/internal/modemadapter/standardsms"
 )
 
 // TestRemoteATBridgeReadOnlyProbe is opt-in HIL-0 evidence for the bridged
@@ -38,13 +39,7 @@ func TestRemoteATBridgeReadOnlyProbe(t *testing.T) {
 		t.Fatalf("build bridge opener: %v", err)
 	}
 	registry := modemadapter.DefaultRegistry()
-	specs := make([]BridgeSpec, 0, len(config.Bridges))
-	for _, bridge := range config.Bridges {
-		specs = append(specs, BridgeSpec{
-			Key: bridge.Target.Key, Profile: bridge.Profile, AttestCapabilities: bridge.AttestCapabilities,
-		})
-	}
-	source, err := NewBridgeDeviceSource(registry, specs, atremote.Locator)
+	source, err := NewBridgeDeviceSource(registry, bridgeSpecsFor(config), atremote.Locator)
 	if err != nil {
 		t.Fatalf("build bridge device source: %v", err)
 	}
@@ -82,4 +77,77 @@ func TestRemoteATBridgeReadOnlyProbe(t *testing.T) {
 				probe.State, probe.ErrorCode, probe.ErrorDetail)
 		}
 	}
+}
+
+// TestRemoteATBridgeCellularSMSReadPath is opt-in HIL-0 evidence for the
+// inbound cellular SMS machinery over a bridged control endpoint. It drives the
+// real standardsms driver, which issues the same fixed transcript the production
+// adapter uses, and asserts the modem accepted it.
+//
+// It reads only: PDU mode selection, storage selection, and a storage listing.
+// It sends nothing and deletes nothing, so it is safe to run against a
+// designated SIM. Outbound submission needs a registered network and is not
+// covered here.
+func TestRemoteATBridgeCellularSMSReadPath(t *testing.T) {
+	configPath := os.Getenv("SIMPLUS_REMOTE_AT_HIL_CONFIG")
+	if configPath == "" {
+		t.Skip("set SIMPLUS_REMOTE_AT_HIL_CONFIG to run the opt-in remote bridge SMS probe")
+	}
+	config, err := atremote.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("load bridge configuration: %v", err)
+	}
+	bridgeOpener, err := atremote.NewOpener(config.Targets())
+	if err != nil {
+		t.Fatalf("build bridge opener: %v", err)
+	}
+	transport, err := standardsms.NewOpenerTransport(
+		atremote.NewRoutingOpener(bridgeOpener, attransport.NewOpener()),
+	)
+	if err != nil {
+		t.Fatalf("build SMS transport: %v", err)
+	}
+	model := modemadapter.ML307ASMS{}
+	driver, err := standardsms.NewDriver(model, transport)
+	if err != nil {
+		t.Fatalf("build SMS driver: %v", err)
+	}
+	registry, err := modemadapter.NewRegistry(model)
+	if err != nil {
+		t.Fatalf("build registry: %v", err)
+	}
+	source, err := NewBridgeDeviceSource(registry, bridgeSpecsFor(config), atremote.Locator)
+	if err != nil {
+		t.Fatalf("build bridge device source: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	devices, err := source.Devices(ctx)
+	if err != nil {
+		t.Fatalf("contributed devices: %v", err)
+	}
+	for _, device := range devices {
+		if device.Profile != agentapi.ProfileML307A {
+			continue
+		}
+		stored, listErr := driver.List(ctx, device)
+		if listErr != nil {
+			t.Fatalf("bridged SMS storage listing failed for %s: %v", device.ID, listErr)
+		}
+		t.Logf("bridged SMS storage listing for %s returned %d stored message(s)", device.ID, len(stored))
+		for _, message := range stored {
+			// Never log PDU content: it carries sender identity and message text.
+			t.Logf("  storage index %d status %d tpdu %d bytes", message.Index, message.Status, message.TPDULength)
+		}
+	}
+}
+
+func bridgeSpecsFor(config atremote.Config) []BridgeSpec {
+	specs := make([]BridgeSpec, 0, len(config.Bridges))
+	for _, bridge := range config.Bridges {
+		specs = append(specs, BridgeSpec{
+			Key: bridge.Target.Key, Profile: bridge.Profile, AttestCapabilities: bridge.AttestCapabilities,
+		})
+	}
+	return specs
 }

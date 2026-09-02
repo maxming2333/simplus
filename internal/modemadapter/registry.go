@@ -147,6 +147,19 @@ type SMSCallSafetyAdapter interface {
 	ReadSMSBlockingCallCount(context.Context, attransport.Query) (count int, known bool)
 }
 
+// LocalTTYAdapter marks a model whose compiled-in driver owns a transport that
+// can only address a local tty device node.
+//
+// It exists so an inventory source that publishes a device reached through some
+// other control transport can refuse that model explicitly, instead of
+// synthesizing a device that looks operable and then failing deep inside a
+// driver-owned transport. A model whose drivers run over the shared
+// attransport seam must not implement it.
+type LocalTTYAdapter interface {
+	Adapter
+	RequiresLocalTTY() bool
+}
+
 type Registry struct {
 	ordered      []Adapter
 	byProfile    map[string]Adapter

@@ -39,6 +39,7 @@ var (
 	_ RFControlAdapter         = QDC507{}
 	_ EquipmentIdentityAdapter = QDC507{}
 	_ SMSCallSafetyAdapter     = QDC507SMS{}
+	_ LocalTTYAdapter          = QDC507SMS{}
 	_ SMSCallSafetyAdapter     = QDC507{}
 )
 
@@ -107,6 +108,11 @@ func (QDC507SMS) ReadSMSBlockingCallCount(ctx context.Context, query attransport
 func (QDC507) ReadSMSBlockingCallCount(ctx context.Context, query attransport.Query) (int, bool) {
 	return readQDC507SMSBlockingCallCount(ctx, query)
 }
+
+// RequiresLocalTTY reports that the accepted QDC507 SMS driver is composed over
+// the dedicated tty transport, so this model cannot be published on a control
+// path that is not a local device node.
+func (QDC507SMS) RequiresLocalTTY() bool { return true }
 
 func (QDC507SMS) Capabilities(device agentapi.DeviceReport) []agentapi.CapabilityEvidence {
 	capabilities := QDC507{}.Capabilities(device)

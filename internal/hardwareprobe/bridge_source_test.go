@@ -203,20 +203,25 @@ func TestNewBridgeDeviceSourceRejectsUnusableSpecs(t *testing.T) {
 	}
 }
 
-// TestNewBridgeDeviceSourceRejectsDriverOwnedTransports keeps a model whose
-// driver owns its own transport out of the bridged path. Publishing it would
-// produce a device that looks operable and then fails inside a transport this
-// seam does not provide.
-func TestNewBridgeDeviceSourceRejectsDriverOwnedTransports(t *testing.T) {
-	registry, err := modemadapter.NewRegistry(driverOwnedAdapter{}, modemadapter.ML307A{})
+// TestNewBridgeDeviceSourceRejectsLocalOnlyModels keeps a model whose driver
+// owns a tty-only transport out of the bridged path. Publishing it would produce
+// a device that looks operable and then fails inside that driver-owned transport.
+//
+// The rejection must be driven by the model's own declaration, not by inferring
+// it from a capability interface: a model that implements the same capability
+// over the shared AT transport seam is bridgeable.
+func TestNewBridgeDeviceSourceRejectsLocalOnlyModels(t *testing.T) {
+	registry, err := modemadapter.NewRegistry(localOnlyAdapter{}, bridgeableSMSAdapter{}, modemadapter.ML307A{})
 	if err != nil {
 		t.Fatalf("build registry: %v", err)
 	}
-	if _, err := NewBridgeDeviceSource(registry, []BridgeSpec{{Key: "a", Profile: "driver-owned"}}, testLocator); err == nil {
-		t.Fatal("NewBridgeDeviceSource accepted a driver-owned transport profile")
+	if _, err := NewBridgeDeviceSource(registry, []BridgeSpec{{Key: "a", Profile: "local-only"}}, testLocator); err == nil {
+		t.Fatal("NewBridgeDeviceSource accepted a model that requires a local control endpoint")
 	}
-	if _, err := NewBridgeDeviceSource(registry, []BridgeSpec{{Key: "a", Profile: agentapi.ProfileML307A}}, testLocator); err != nil {
-		t.Fatalf("NewBridgeDeviceSource rejected a bridgeable profile: %v", err)
+	for _, profile := range []string{"bridgeable-sms", agentapi.ProfileML307A} {
+		if _, err := NewBridgeDeviceSource(registry, []BridgeSpec{{Key: "a", Profile: profile}}, testLocator); err != nil {
+			t.Fatalf("NewBridgeDeviceSource rejected bridgeable profile %q: %v", profile, err)
+		}
 	}
 }
 
@@ -289,27 +294,39 @@ func (endpointlessAdapter) Endpoint(agentapi.DeviceReport, modemadapter.Endpoint
 	return agentapi.Endpoint{}, false
 }
 
-type driverOwnedAdapter struct{ fixedInterfaceAdapter }
+// localOnlyAdapter declares a tty-only driver transport, like the accepted
+// QDC507 SMS composition.
+type localOnlyAdapter struct{ smsCapableAdapter }
 
-func (driverOwnedAdapter) Profile() string     { return "driver-owned" }
-func (driverOwnedAdapter) DisplayName() string { return "Driver Owned" }
+func (localOnlyAdapter) Profile() string        { return "local-only" }
+func (localOnlyAdapter) DisplayName() string    { return "Local Only" }
+func (localOnlyAdapter) RequiresLocalTTY() bool { return true }
 
-func (adapter driverOwnedAdapter) Endpoint(device agentapi.DeviceReport, role modemadapter.EndpointRole) (agentapi.Endpoint, bool) {
+// bridgeableSMSAdapter implements the same SMS capability but over the shared AT
+// transport seam, so it must remain publishable on a bridged control path.
+type bridgeableSMSAdapter struct{ smsCapableAdapter }
+
+func (bridgeableSMSAdapter) Profile() string     { return "bridgeable-sms" }
+func (bridgeableSMSAdapter) DisplayName() string { return "Bridgeable SMS" }
+
+type smsCapableAdapter struct{ fixedInterfaceAdapter }
+
+func (adapter smsCapableAdapter) Endpoint(device agentapi.DeviceReport, role modemadapter.EndpointRole) (agentapi.Endpoint, bool) {
 	return fixedInterfaceAdapter{number: 0}.Endpoint(device, role)
 }
 
-func (driverOwnedAdapter) ListSMS(context.Context, modemadapter.SMSRuntimeTarget) ([]agentapi.SMSMessageReference, error) {
+func (smsCapableAdapter) ListSMS(context.Context, modemadapter.SMSRuntimeTarget) ([]agentapi.SMSMessageReference, error) {
 	return nil, nil
 }
 
-func (driverOwnedAdapter) ReadSMS(context.Context, modemadapter.SMSRuntimeTarget, string) (agentapi.SMSStoredMessage, error) {
+func (smsCapableAdapter) ReadSMS(context.Context, modemadapter.SMSRuntimeTarget, string) (agentapi.SMSStoredMessage, error) {
 	return agentapi.SMSStoredMessage{}, nil
 }
 
-func (driverOwnedAdapter) SendSMS(context.Context, modemadapter.SMSRuntimeTarget, agentapi.SMSSendRequest) (agentapi.SMSSubmission, error) {
+func (smsCapableAdapter) SendSMS(context.Context, modemadapter.SMSRuntimeTarget, agentapi.SMSSendRequest) (agentapi.SMSSubmission, error) {
 	return agentapi.SMSSubmission{}, nil
 }
 
-func (driverOwnedAdapter) AcknowledgeSMS(context.Context, modemadapter.SMSRuntimeTarget, agentapi.SMSAcknowledgeRequest) (bool, error) {
+func (smsCapableAdapter) AcknowledgeSMS(context.Context, modemadapter.SMSRuntimeTarget, agentapi.SMSAcknowledgeRequest) (bool, error) {
 	return false, nil
 }

@@ -113,11 +113,15 @@ func buildBridgeDevice(registry *modemadapter.Registry, spec BridgeSpec, node st
 	if !ok {
 		return agentapi.DeviceReport{}, fmt.Errorf("bridge %q profile %q has no registered model adapter", spec.Key, spec.Profile)
 	}
-	if _, ok := adapter.(modemadapter.SMSAdapter); ok {
-		// An SMS-capable adapter owns its own dedicated transport, which this
-		// seam does not provide. Refuse to synthesize a device that would look
-		// operable for SMS and then fail inside a driver-owned transport.
-		return agentapi.DeviceReport{}, fmt.Errorf("bridge %q profile %q owns a dedicated driver transport and cannot be bridged", spec.Key, spec.Profile)
+	if local, ok := adapter.(modemadapter.LocalTTYAdapter); ok && local.RequiresLocalTTY() {
+		// The model declares that one of its drivers owns a transport which can
+		// only address a local device node. Refuse to synthesize a device that
+		// would look operable and then fail inside that driver-owned transport.
+		//
+		// The check is adapter-declared rather than inferred from a capability
+		// interface: a model whose drivers run over the shared attransport seam
+		// is bridgeable even when it implements the same capability.
+		return agentapi.DeviceReport{}, fmt.Errorf("bridge %q profile %q requires a local control endpoint and cannot be bridged", spec.Key, spec.Profile)
 	}
 	usbInterface, ok := synthesizeBridgeInterface(adapter, node)
 	if !ok {
