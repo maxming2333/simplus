@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"bytes"
@@ -29,6 +29,8 @@ type fixtureDriver struct {
 	sendResult     SendResult
 	sendErr        error
 }
+
+func (driver *fixtureDriver) Profile() string { return agentapi.ProfileQDC507 }
 
 func (driver *fixtureDriver) List(ctx context.Context, _ agentapi.DeviceReport) ([]StoredPDU, error) {
 	if err := ctx.Err(); err != nil {
@@ -134,7 +136,7 @@ func TestAdapterRecoversMultipartAcknowledgeAcrossAdapterRestart(t *testing.T) {
 		deleteFailures: map[int]int{11: 1},
 	}
 	store := NewMemoryStateStore()
-	adapter, err := NewAdapter(driver, store)
+	adapter, err := NewAdapter(modemadapter.QDC507SMS{}, driver, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +161,7 @@ func TestAdapterRecoversMultipartAcknowledgeAcrossAdapterRestart(t *testing.T) {
 
 	// Reconstructing the adapter while retaining the state store models the
 	// lifecycle expected from a future process-durable StateStore.
-	restarted, err := NewAdapter(driver, store)
+	restarted, err := NewAdapter(modemadapter.QDC507SMS{}, driver, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +197,7 @@ func TestAdapterNeverDeletesAReusedStorageIndex(t *testing.T) {
 		messages:       map[int]StoredPDU{7: storedDeliverPDU(t, 7, 0, "10086", receivedAt, original)},
 		deleteFailures: make(map[int]int),
 	}
-	adapter, err := NewAdapter(driver, NewMemoryStateStore())
+	adapter, err := NewAdapter(modemadapter.QDC507SMS{}, driver, NewMemoryStateStore())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +220,7 @@ func TestAdapterDurableNamespaceFollowsSIMAcrossUSBPortAndIsolatesSwap(t *testin
 		t.Fatal(err)
 	}
 	driver := &fixtureDriver{messages: map[int]StoredPDU{3: {Index: 3, Status: 0, TPDULength: 24, PDU: decoded}}, deleteFailures: map[int]int{}}
-	adapter, err := NewAdapter(driver, NewMemoryStateStore())
+	adapter, err := NewAdapter(modemadapter.QDC507SMS{}, driver, NewMemoryStateStore())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +248,7 @@ func TestAdapterReplaysSuccessfulSendAndDoesNotReplayUnknownSend(t *testing.T) {
 		messages: make(map[int]StoredPDU), deleteFailures: make(map[int]int),
 		sendResult: SendResult{Parts: []PartSubmission{{Part: 1, Total: 1, MessageReference: 42}}},
 	}
-	adapter, err := NewAdapter(driver, store)
+	adapter, err := NewAdapter(modemadapter.QDC507SMS{}, driver, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +262,7 @@ func TestAdapterReplaysSuccessfulSendAndDoesNotReplayUnknownSend(t *testing.T) {
 	if err != nil || first.OperationID != request.OperationID || first.MessageID == "" || first.SubmittedAt != now {
 		t.Fatalf("first send = %#v, error = %v", first, err)
 	}
-	restarted, err := NewAdapter(driver, store)
+	restarted, err := NewAdapter(modemadapter.QDC507SMS{}, driver, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +281,7 @@ func TestAdapterReplaysSuccessfulSendAndDoesNotReplayUnknownSend(t *testing.T) {
 		messages: make(map[int]StoredPDU), deleteFailures: make(map[int]int),
 		sendErr: &SendFailure{CompletedParts: 1, TotalParts: 2, Cause: errors.New("second part rejected")},
 	}
-	unknownAdapter, err := NewAdapter(unknownDriver, NewMemoryStateStore())
+	unknownAdapter, err := NewAdapter(modemadapter.QDC507SMS{}, unknownDriver, NewMemoryStateStore())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +299,7 @@ func TestAdapterReplaysSuccessfulSendAndDoesNotReplayUnknownSend(t *testing.T) {
 }
 
 func TestCandidateAdapterRequiresExplicitNonDefaultRegistration(t *testing.T) {
-	adapter, err := NewAdapter(&fixtureDriver{
+	adapter, err := NewAdapter(modemadapter.QDC507SMS{}, &fixtureDriver{
 		messages: make(map[int]StoredPDU), deleteFailures: make(map[int]int),
 	}, NewMemoryStateStore())
 	if err != nil {
@@ -319,7 +321,7 @@ func TestAdapterReleasesOperationAfterConfirmedNoSideEffect(t *testing.T) {
 	driver := &fixtureDriver{
 		messages: make(map[int]StoredPDU), deleteFailures: make(map[int]int), sendErr: errors.New("pre-dispatch failure"),
 	}
-	adapter, err := NewAdapter(driver, NewMemoryStateStore())
+	adapter, err := NewAdapter(modemadapter.QDC507SMS{}, driver, NewMemoryStateStore())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +354,7 @@ func TestAdapterDoesNotRedispatchAnAcceptedOperationAfterRestart(t *testing.T) {
 		messages: make(map[int]StoredPDU), deleteFailures: make(map[int]int),
 		sendResult: SendResult{Parts: []PartSubmission{{Part: 1, Total: 1, MessageReference: 1}}},
 	}
-	adapter, err := NewAdapter(driver, store)
+	adapter, err := NewAdapter(modemadapter.QDC507SMS{}, driver, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +386,7 @@ func TestSQLiteStateStoreRecoversAcknowledgeAndSendAcrossReopen(t *testing.T) {
 		deleteFailures: map[int]int{21: 1},
 		sendResult:     SendResult{Parts: []PartSubmission{{Part: 1, Total: 1, MessageReference: 77}}},
 	}
-	adapter, err := NewAdapter(driver, store)
+	adapter, err := NewAdapter(modemadapter.QDC507SMS{}, driver, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +426,7 @@ func TestSQLiteStateStoreRecoversAcknowledgeAndSendAcrossReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	restarted, err := NewAdapter(driver, reopened)
+	restarted, err := NewAdapter(modemadapter.QDC507SMS{}, driver, reopened)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -648,7 +650,7 @@ func TestSQLiteStateStoreRejectsUnsafePathsAndArtifacts(t *testing.T) {
 			test.setup(t, directory, path)
 			if store, err := OpenSQLiteStateStore(t.Context(), path); err == nil {
 				_ = store.Close()
-				t.Fatal("unsafe QDC507 SMS state artifact was accepted")
+				t.Fatal("unsafe 3GPP SMS state artifact was accepted")
 			}
 		})
 	}
@@ -664,7 +666,7 @@ func TestSQLiteStateStoreRejectsUnsafeAncestorAndSchemaMismatch(t *testing.T) {
 	}
 	if store, err := OpenSQLiteStateStore(t.Context(), filepath.Join(unsafeAncestor, "state", "state.sqlite3")); err == nil {
 		_ = store.Close()
-		t.Fatal("QDC507 SMS state accepted an unsafe ancestor")
+		t.Fatal("3GPP SMS state accepted an unsafe ancestor")
 	}
 
 	path := filepath.Join(t.TempDir(), "state", "state.sqlite3")
@@ -692,7 +694,7 @@ func TestSQLiteStateStoreRejectsUnsafeAncestorAndSchemaMismatch(t *testing.T) {
 	}
 	if reopened, err := OpenSQLiteStateStore(t.Context(), path); err == nil {
 		_ = reopened.Close()
-		t.Fatal("QDC507 SMS state accepted a schema manifest mismatch")
+		t.Fatal("3GPP SMS state accepted a schema manifest mismatch")
 	}
 }
 

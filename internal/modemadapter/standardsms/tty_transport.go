@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"context"
@@ -18,10 +18,10 @@ const (
 )
 
 var (
-	ErrTTYUnsupported       = errors.New("QDC507 SMS tty transport is unsupported on this platform")
-	ErrPromptNotDispatched  = errors.New("QDC507 SMS payload was not dispatched")
-	ErrTTYResponseTooLarge  = errors.New("QDC507 SMS tty response exceeds its bounded size")
-	ErrTTYTranscriptInvalid = errors.New("QDC507 SMS tty transcript is invalid")
+	ErrTTYUnsupported       = errors.New("3GPP SMS tty transport is unsupported on this platform")
+	ErrPromptNotDispatched  = errors.New("3GPP SMS payload was not dispatched")
+	ErrTTYResponseTooLarge  = errors.New("3GPP SMS tty response exceeds its bounded size")
+	ErrTTYTranscriptInvalid = errors.New("3GPP SMS tty transcript is invalid")
 )
 
 type serialSession interface {
@@ -63,11 +63,11 @@ func ttyCommand(ctx context.Context, open serialSessionOpener, endpoint, command
 	}
 	defer session.Close()
 	if err := session.FlushInput(); err != nil {
-		return nil, fmt.Errorf("flush QDC507 SMS tty input: %w", err)
+		return nil, fmt.Errorf("flush 3GPP SMS tty input: %w", err)
 	}
 	deadline := time.Now().Add(timeout)
 	if err := session.Write(ctx, []byte(command+"\r"), remainingTTYTimeout(deadline)); err != nil {
-		return nil, fmt.Errorf("write QDC507 SMS AT command: %w", err)
+		return nil, fmt.Errorf("write 3GPP SMS AT command: %w", err)
 	}
 	return readTTYTerminal(ctx, session, command, "", deadline, nil)
 }
@@ -92,11 +92,11 @@ func ttyPrompt(ctx context.Context, open serialSessionOpener, endpoint, command 
 	}
 	defer session.Close()
 	if err := session.FlushInput(); err != nil {
-		return nil, errors.Join(ErrPromptNotDispatched, fmt.Errorf("flush QDC507 SMS tty input: %w", err))
+		return nil, errors.Join(ErrPromptNotDispatched, fmt.Errorf("flush 3GPP SMS tty input: %w", err))
 	}
 	deadline := time.Now().Add(timeout)
 	if err := session.Write(ctx, []byte(command+"\r"), remainingTTYTimeout(deadline)); err != nil {
-		return nil, errors.Join(ErrPromptNotDispatched, fmt.Errorf("write QDC507 SMS prompt command: %w", err))
+		return nil, errors.Join(ErrPromptNotDispatched, fmt.Errorf("write 3GPP SMS prompt command: %w", err))
 	}
 	prefix, terminal, err := readTTYPrompt(ctx, session, command, deadline)
 	if err != nil {
@@ -106,7 +106,7 @@ func ttyPrompt(ctx context.Context, open serialSessionOpener, endpoint, command 
 		return terminal, nil
 	}
 	if err := session.Write(ctx, payload, remainingTTYTimeout(deadline)); err != nil {
-		return nil, fmt.Errorf("write QDC507 SMS submit payload: %w", err)
+		return nil, fmt.Errorf("write 3GPP SMS submit payload: %w", err)
 	}
 	payloadEcho := string(payload[:len(payload)-1])
 	return readTTYTerminal(ctx, session, "", payloadEcho, deadline, prefix)
@@ -125,39 +125,39 @@ func openTTYSession(open serialSessionOpener, endpoint string) (serialSession, e
 	}
 	session, err := open(endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("open QDC507 SMS tty: %w", err)
+		return nil, fmt.Errorf("open 3GPP SMS tty: %w", err)
 	}
 	if session == nil {
-		return nil, errors.New("QDC507 SMS tty opener returned no session")
+		return nil, errors.New("3GPP SMS tty opener returned no session")
 	}
 	return session, nil
 }
 
 func validateTTYExchange(endpoint, command string, timeout time.Duration) error {
 	if endpoint == "" || len(endpoint) > 4096 || strings.IndexFunc(endpoint, unicode.IsControl) >= 0 {
-		return errors.New("QDC507 SMS tty endpoint is invalid")
+		return errors.New("3GPP SMS control endpoint is invalid")
 	}
 	if len(command) < 2 || len(command) > maxTTYCommandBytes || !strings.HasPrefix(command, "AT") {
-		return errors.New("QDC507 SMS AT command is invalid")
+		return errors.New("3GPP SMS AT command is invalid")
 	}
 	for _, character := range command {
 		if character < 0x20 || character > 0x7e {
-			return errors.New("QDC507 SMS AT command contains a non-printable byte")
+			return errors.New("3GPP SMS AT command contains a non-printable byte")
 		}
 	}
 	if timeout <= 0 || timeout > sendTimeout {
-		return errors.New("QDC507 SMS tty timeout is outside its bounded range")
+		return errors.New("3GPP SMS timeout is outside its bounded range")
 	}
 	return nil
 }
 
 func validateSubmitPayload(payload []byte) error {
 	if len(payload) < 3 || len(payload) > maxTTYSubmitBytes || payload[len(payload)-1] != 0x1a || (len(payload)-1)%2 != 0 {
-		return errors.New("QDC507 SMS submit payload is invalid")
+		return errors.New("3GPP SMS submit payload is invalid")
 	}
 	for _, value := range payload[:len(payload)-1] {
 		if (value < '0' || value > '9') && (value < 'A' || value > 'F') {
-			return errors.New("QDC507 SMS submit payload is not uppercase hexadecimal PDU data")
+			return errors.New("3GPP SMS submit payload is not uppercase hexadecimal PDU data")
 		}
 	}
 	return nil
@@ -168,7 +168,7 @@ func readTTYPrompt(ctx context.Context, session serialSession, command string, d
 	for {
 		chunk, err := readTTYChunk(ctx, session, deadline)
 		if err != nil {
-			return nil, nil, fmt.Errorf("wait for QDC507 SMS submit prompt: %w", err)
+			return nil, nil, fmt.Errorf("wait for 3GPP SMS submit prompt: %w", err)
 		}
 		buffer, err = appendTTYBounded(buffer, chunk)
 		if err != nil {
@@ -198,7 +198,7 @@ func readTTYTerminal(ctx context.Context, session serialSession, command, payloa
 		}
 		chunk, err := readTTYChunk(ctx, session, deadline)
 		if err != nil {
-			return nil, fmt.Errorf("read QDC507 SMS tty response: %w", err)
+			return nil, fmt.Errorf("read 3GPP SMS tty response: %w", err)
 		}
 		buffer, err = appendTTYBounded(buffer, chunk)
 		if err != nil {

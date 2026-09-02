@@ -1,6 +1,6 @@
 //go:build linux
 
-package qdc507sms
+package standardsms
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func openSerialSession(endpoint string) (serialSession, error) {
 		return closeOnError(fmt.Errorf("inspect tty: %w", err))
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFCHR {
-		return closeOnError(errors.New("QDC507 SMS endpoint is not a character device"))
+		return closeOnError(errors.New("3GPP SMS endpoint is not a character device"))
 	}
 	if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		return closeOnError(fmt.Errorf("lock tty: %w", err))
@@ -58,14 +58,14 @@ func openSerialSession(endpoint string) (serialSession, error) {
 
 func (session *unixSerialSession) FlushInput() error {
 	if session == nil || session.fd < 0 {
-		return errors.New("QDC507 SMS tty session is closed")
+		return errors.New("3GPP SMS tty session is closed")
 	}
 	return unix.IoctlSetInt(session.fd, unix.TCFLSH, unix.TCIFLUSH)
 }
 
 func (session *unixSerialSession) Write(ctx context.Context, payload []byte, timeout time.Duration) error {
 	if session == nil || session.fd < 0 {
-		return errors.New("QDC507 SMS tty session is closed")
+		return errors.New("3GPP SMS tty session is closed")
 	}
 	deadline := time.Now().Add(timeout)
 	for len(payload) != 0 {
@@ -89,7 +89,7 @@ func (session *unixSerialSession) Write(ctx context.Context, payload []byte, tim
 
 func (session *unixSerialSession) Read(ctx context.Context, buffer []byte, timeout time.Duration) (int, error) {
 	if session == nil || session.fd < 0 {
-		return 0, errors.New("QDC507 SMS tty session is closed")
+		return 0, errors.New("3GPP SMS tty session is closed")
 	}
 	deadline := time.Now().Add(timeout)
 	for {
@@ -157,7 +157,7 @@ func pollTTYContext(ctx context.Context, fd int, events int16, timeout time.Dura
 			continue
 		}
 		if pollFD[0].Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
-			return errors.New("QDC507 SMS tty became unavailable")
+			return errors.New("3GPP SMS tty became unavailable")
 		}
 		if pollFD[0].Revents&events != 0 {
 			return nil
@@ -166,5 +166,5 @@ func pollTTYContext(ctx context.Context, fd int, events int16, timeout time.Dura
 }
 
 func ioProgressError(operation string) error {
-	return fmt.Errorf("QDC507 SMS tty %s made no progress", operation)
+	return fmt.Errorf("3GPP SMS tty %s made no progress", operation)
 }

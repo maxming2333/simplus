@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/leonfox28/simplus/internal/agentapi"
 )
 
-var ErrStateConflict = errors.New("QDC507 SMS state conflicts with an existing record")
+var ErrStateConflict = errors.New("3GPP SMS state conflicts with an existing record")
 var subscriptionKeyPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type operationKind string
@@ -34,7 +34,7 @@ type operationRecord struct {
 	Submission      agentapi.SMSSubmission
 }
 
-// StateStore is deliberately scoped to QDC507 SMS recovery. A production
+// StateStore is deliberately scoped to 3GPP SMS recovery. A production
 // implementation must make each method atomic and retain records across Agent
 // process restarts; it is not a second generic command ledger.
 type StateStore interface {
@@ -136,7 +136,7 @@ func (store *MemoryStateStore) PutOperation(ctx context.Context, record operatio
 		return operationRecord{}, false, err
 	}
 	if !validOperation(record) || record.State != operationAccepted {
-		return operationRecord{}, false, errors.New("invalid QDC507 SMS operation record")
+		return operationRecord{}, false, errors.New("invalid 3GPP SMS operation record")
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -152,7 +152,7 @@ func (store *MemoryStateStore) UpdateOperation(ctx context.Context, record opera
 		return err
 	}
 	if !validOperation(record) || (record.State != operationSucceeded && record.State != operationUnknown) {
-		return errors.New("invalid terminal QDC507 SMS operation record")
+		return errors.New("invalid terminal 3GPP SMS operation record")
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -181,22 +181,22 @@ func (store *MemoryStateStore) DeleteOperation(ctx context.Context, record opera
 
 func validInboundRecord(record InboundRecord) error {
 	if record.MessageID == "" || !subscriptionKeyPattern.MatchString(record.SubscriptionKey) || record.Sender == "" || record.Body == "" || record.ReceivedAt.IsZero() || len(record.Segments) == 0 {
-		return errors.New("invalid QDC507 inbound SMS state")
+		return errors.New("invalid 3GPP inbound SMS state")
 	}
 	seen := make(map[int]struct{}, len(record.Segments))
 	for _, segment := range record.Segments {
 		if segment.Index < 0 || segment.Index > maxStorageIndex || segment.DeleteStarted {
-			return errors.New("invalid QDC507 inbound SMS storage index")
+			return errors.New("invalid 3GPP inbound SMS storage index")
 		}
 		if _, duplicate := seen[segment.Index]; duplicate {
-			return errors.New("duplicate QDC507 inbound SMS storage index")
+			return errors.New("duplicate 3GPP inbound SMS storage index")
 		}
 		seen[segment.Index] = struct{}{}
 	}
 	if record.Acknowledged {
 		for _, segment := range record.Segments {
 			if !segment.Deleted {
-				return errors.New("acknowledged QDC507 SMS retains an undeleted segment")
+				return errors.New("acknowledged 3GPP SMS retains an undeleted segment")
 			}
 		}
 	}

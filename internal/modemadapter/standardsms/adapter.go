@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"context"
@@ -13,9 +13,12 @@ import (
 	"github.com/leonfox28/simplus/internal/modemadapter"
 )
 
-var ErrStorageIndexReused = errors.New("QDC507 SMS storage index now contains a different message")
+var ErrStorageIndexReused = errors.New("3GPP SMS storage index now contains a different message")
 
 type PDUDriver interface {
+	// Profile is the model this driver serves. The adapter layer rejects a
+	// runtime target whose device belongs to a different model.
+	Profile() string
 	List(context.Context, agentapi.DeviceReport) ([]StoredPDU, error)
 	Read(context.Context, agentapi.DeviceReport, int) (StoredPDU, error)
 	Delete(context.Context, agentapi.DeviceReport, int) error
@@ -26,8 +29,12 @@ type PDUDriver interface {
 // It is intentionally not part of modemadapter.DefaultRegistry until the
 // durable store is wired, a real tty transport exists, and authorized HIL has
 // been accepted.
+// Adapter completes modemadapter.SMSAdapter for any model whose SMS evidence
+// has been accepted. The embedded model adapter supplies discovery facts,
+// capability evidence and control-endpoint resolution; this type owns only the
+// durable inbound/operation state machine around the generic PDU driver.
 type Adapter struct {
-	modemadapter.QDC507SMS
+	modemadapter.Adapter
 	driver PDUDriver
 	store  StateStore
 	now    func() time.Time
@@ -38,11 +45,14 @@ var (
 	_ modemadapter.SMSAdapter = (*Adapter)(nil)
 )
 
-func NewAdapter(driver PDUDriver, store StateStore) (*Adapter, error) {
-	if driver == nil || store == nil {
-		return nil, errors.New("QDC507 SMS adapter dependencies are incomplete")
+func NewAdapter(model modemadapter.Adapter, driver PDUDriver, store StateStore) (*Adapter, error) {
+	if model == nil || driver == nil || store == nil {
+		return nil, errors.New("3GPP SMS adapter dependencies are incomplete")
 	}
-	return &Adapter{driver: driver, store: store, now: time.Now}, nil
+	if model.Profile() == "" || model.Profile() != driver.Profile() {
+		return nil, errors.New("3GPP SMS adapter model and driver must serve the same profile")
+	}
+	return &Adapter{Adapter: model, driver: driver, store: store, now: time.Now}, nil
 }
 
 func (adapter *Adapter) ListSMS(ctx context.Context, target modemadapter.SMSRuntimeTarget) ([]agentapi.SMSMessageReference, error) {
@@ -76,12 +86,12 @@ func collectInboundWithStored(ctx context.Context, driver PDUDriver, store State
 	}
 	for _, message := range assembled {
 		if _, _, err := store.PutInbound(ctx, message); err != nil {
-			return nil, nil, fmt.Errorf("persist QDC507 inbound SMS: %w", err)
+			return nil, nil, fmt.Errorf("persist 3GPP inbound SMS: %w", err)
 		}
 	}
 	pending, err := store.ListInbound(ctx, target.SubscriptionKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list QDC507 inbound SMS state: %w", err)
+		return nil, nil, fmt.Errorf("list 3GPP inbound SMS state: %w", err)
 	}
 	return stored, pending, nil
 }
@@ -106,7 +116,7 @@ func readSMS(ctx context.Context, driver PDUDriver, store StateStore, target mod
 	}
 	record, found, err := store.FindInbound(ctx, target.SubscriptionKey, messageID)
 	if err != nil {
-		return agentapi.SMSStoredMessage{}, fmt.Errorf("read QDC507 inbound SMS state: %w", err)
+		return agentapi.SMSStoredMessage{}, fmt.Errorf("read 3GPP inbound SMS state: %w", err)
 	}
 	if !found || record.Acknowledged {
 		return agentapi.SMSStoredMessage{}, agentapi.ErrSMSMessageNotFound
@@ -144,7 +154,7 @@ func sendSMS(
 	}
 	existing, replayed, err := store.PutOperation(ctx, accepted)
 	if err != nil {
-		return agentapi.SMSSubmission{}, fmt.Errorf("persist QDC507 SMS send operation: %w", err)
+		return agentapi.SMSSubmission{}, fmt.Errorf("persist 3GPP SMS send operation: %w", err)
 	}
 	if replayed {
 		if existing.SubscriptionKey != target.SubscriptionKey || existing.Kind != operationSend || existing.RequestDigest != digest {
@@ -177,7 +187,7 @@ func sendSMS(
 		return agentapi.SMSSubmission{}, sendErr
 	}
 	if !validSendResult(result) {
-		return agentapi.SMSSubmission{}, terminalSendFailure(ctx, store, accepted, errors.New("QDC507 send returned invalid submitted parts"))
+		return agentapi.SMSSubmission{}, terminalSendFailure(ctx, store, accepted, errors.New("modem send returned invalid submitted parts"))
 	}
 	submission := agentapi.SMSSubmission{
 		OperationID: request.OperationID,
@@ -209,7 +219,7 @@ func acknowledgeSMS(ctx context.Context, driver PDUDriver, store StateStore, tar
 	}
 	existing, replayed, err := store.PutOperation(ctx, accepted)
 	if err != nil {
-		return false, fmt.Errorf("persist QDC507 SMS acknowledge operation: %w", err)
+		return false, fmt.Errorf("persist 3GPP SMS acknowledge operation: %w", err)
 	}
 	if replayed {
 		if existing.SubscriptionKey != target.SubscriptionKey || existing.Kind != operationAcknowledge || existing.RequestDigest != digest {
@@ -225,7 +235,7 @@ func acknowledgeSMS(ctx context.Context, driver PDUDriver, store StateStore, tar
 
 	record, found, err := store.FindInbound(ctx, target.SubscriptionKey, request.MessageID)
 	if err != nil {
-		return false, fmt.Errorf("read QDC507 SMS acknowledge state: %w", err)
+		return false, fmt.Errorf("read 3GPP SMS acknowledge state: %w", err)
 	}
 	if !found {
 		return false, abandonAcknowledge(ctx, store, accepted, agentapi.ErrSMSMessageNotFound)
@@ -233,7 +243,7 @@ func acknowledgeSMS(ctx context.Context, driver PDUDriver, store StateStore, tar
 	if record.Acknowledged {
 		accepted.State = operationSucceeded
 		if err := store.UpdateOperation(context.WithoutCancel(ctx), accepted); err != nil {
-			return false, fmt.Errorf("complete QDC507 SMS acknowledge replay: %w", err)
+			return false, fmt.Errorf("complete 3GPP SMS acknowledge replay: %w", err)
 		}
 		return true, nil
 	}
@@ -247,20 +257,20 @@ func acknowledgeSMS(ctx context.Context, driver PDUDriver, store StateStore, tar
 			return false, err
 		}
 		if !deleted {
-			return false, errors.New("QDC507 SMS segment deletion was not confirmed")
+			return false, errors.New("3GPP SMS segment deletion was not confirmed")
 		}
 		record.Segments[index].Deleted = true
 		if err := store.UpdateInbound(context.WithoutCancel(ctx), record); err != nil {
-			return false, fmt.Errorf("persist QDC507 SMS segment acknowledgement: %w", err)
+			return false, fmt.Errorf("persist 3GPP SMS segment acknowledgement: %w", err)
 		}
 	}
 	record.Acknowledged = true
 	if err := store.UpdateInbound(context.WithoutCancel(ctx), record); err != nil {
-		return false, fmt.Errorf("persist QDC507 SMS acknowledgement: %w", err)
+		return false, fmt.Errorf("persist 3GPP SMS acknowledgement: %w", err)
 	}
 	accepted.State = operationSucceeded
 	if err := store.UpdateOperation(context.WithoutCancel(ctx), accepted); err != nil {
-		return false, fmt.Errorf("complete QDC507 SMS acknowledge operation: %w", err)
+		return false, fmt.Errorf("complete 3GPP SMS acknowledge operation: %w", err)
 	}
 	return true, nil
 }
@@ -271,7 +281,7 @@ func deleteInboundSegment(ctx context.Context, driver PDUDriver, device agentapi
 		return true, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("read QDC507 SMS before acknowledgement: %w", err)
+		return false, fmt.Errorf("read 3GPP SMS before acknowledgement: %w", err)
 	}
 	if current.Index != segment.Index || sha256.Sum256(current.PDU) != segment.PDUDigest {
 		return false, ErrStorageIndexReused
@@ -288,7 +298,7 @@ func deleteInboundSegment(ctx context.Context, driver PDUDriver, device agentapi
 		return true, nil
 	}
 	if readErr != nil {
-		return false, errors.Join(deleteErr, fmt.Errorf("reconcile QDC507 SMS deletion: %w", readErr))
+		return false, errors.Join(deleteErr, fmt.Errorf("reconcile 3GPP SMS deletion: %w", readErr))
 	}
 	if reconciled.Index != segment.Index || sha256.Sum256(reconciled.PDU) != segment.PDUDigest {
 		return false, errors.Join(ErrStorageIndexReused, deleteErr)
@@ -312,7 +322,7 @@ func abandonAcknowledge(ctx context.Context, store StateStore, accepted operatio
 }
 
 func readyAdapter(driver PDUDriver, store StateStore, target modemadapter.SMSRuntimeTarget) error {
-	if driver == nil || store == nil || target.Device.ID == "" || target.Device.Profile != agentapi.ProfileQDC507 ||
+	if driver == nil || store == nil || target.Device.ID == "" || target.Device.Profile != driver.Profile() ||
 		!subscriptionKeyPattern.MatchString(target.SubscriptionKey) {
 		return agentapi.ErrSMSUnsupported
 	}

@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 
 func putSQLiteOperation(ctx context.Context, db *sql.DB, record operationRecord) (operationRecord, bool, error) {
 	if !validOperation(record) || record.State != operationAccepted {
-		return operationRecord{}, false, errors.New("invalid QDC507 SMS operation record")
+		return operationRecord{}, false, errors.New("invalid 3GPP SMS operation record")
 	}
 	tx, err := beginSQLiteOperation(ctx, db)
 	if err != nil {
@@ -22,7 +22,7 @@ func putSQLiteOperation(ctx context.Context, db *sql.DB, record operationRecord)
 	}
 	if found {
 		if err := tx.Commit(); err != nil {
-			return operationRecord{}, false, fmt.Errorf("commit QDC507 SMS operation replay: %w", err)
+			return operationRecord{}, false, fmt.Errorf("commit 3GPP SMS operation replay: %w", err)
 		}
 		return existing, true, nil
 	}
@@ -30,17 +30,17 @@ func putSQLiteOperation(ctx context.Context, db *sql.DB, record operationRecord)
 INSERT INTO operations (operation_id, subscription_key, kind, request_digest, state, submission_message_id, submitted_at_ns)
 VALUES (?, ?, ?, ?, ?, '', 0)
 `, record.OperationID, record.SubscriptionKey, record.Kind, record.RequestDigest[:], record.State); err != nil {
-		return operationRecord{}, false, fmt.Errorf("insert QDC507 SMS operation: %w", err)
+		return operationRecord{}, false, fmt.Errorf("insert 3GPP SMS operation: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return operationRecord{}, false, fmt.Errorf("commit QDC507 SMS operation: %w", err)
+		return operationRecord{}, false, fmt.Errorf("commit 3GPP SMS operation: %w", err)
 	}
 	return record, false, nil
 }
 
 func updateSQLiteOperation(ctx context.Context, db *sql.DB, record operationRecord) error {
 	if !validOperation(record) || (record.State != operationSucceeded && record.State != operationUnknown) {
-		return errors.New("invalid terminal QDC507 SMS operation record")
+		return errors.New("invalid terminal 3GPP SMS operation record")
 	}
 	tx, err := beginSQLiteOperation(ctx, db)
 	if err != nil {
@@ -62,10 +62,10 @@ func updateSQLiteOperation(ctx context.Context, db *sql.DB, record operationReco
 	if _, err := tx.ExecContext(ctx, `
 UPDATE operations SET state = ?, submission_message_id = ?, submitted_at_ns = ? WHERE operation_id = ?
 `, record.State, record.Submission.MessageID, submittedAt, record.OperationID); err != nil {
-		return fmt.Errorf("update QDC507 SMS operation: %w", err)
+		return fmt.Errorf("update 3GPP SMS operation: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit QDC507 SMS operation: %w", err)
+		return fmt.Errorf("commit 3GPP SMS operation: %w", err)
 	}
 	return nil
 }
@@ -84,21 +84,21 @@ func deleteSQLiteOperation(ctx context.Context, db *sql.DB, record operationReco
 		return ErrStateConflict
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM operations WHERE operation_id = ?`, record.OperationID); err != nil {
-		return fmt.Errorf("delete QDC507 SMS operation: %w", err)
+		return fmt.Errorf("delete 3GPP SMS operation: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit QDC507 SMS operation deletion: %w", err)
+		return fmt.Errorf("commit 3GPP SMS operation deletion: %w", err)
 	}
 	return nil
 }
 
 func beginSQLiteOperation(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	if db == nil {
-		return nil, errors.New("QDC507 SMS state is unavailable")
+		return nil, errors.New("3GPP SMS state is unavailable")
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("begin QDC507 SMS state transaction: %w", err)
+		return nil, fmt.Errorf("begin 3GPP SMS state transaction: %w", err)
 	}
 	return tx, nil
 }

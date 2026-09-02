@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"bytes"
@@ -84,7 +84,7 @@ func newTranscriptDriver(t *testing.T, steps ...transcriptStep) (*Driver, *trans
 		}
 	}
 	transport := &transcriptTransport{t: t, steps: expanded}
-	driver, err := NewDriver(transport)
+	driver, err := NewDriver(modemadapter.QDC507SMS{}, transport)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func newTranscriptDriver(t *testing.T, steps ...transcriptStep) (*Driver, *trans
 func newExactTranscriptDriver(t *testing.T, steps ...transcriptStep) (*Driver, *transcriptTransport) {
 	t.Helper()
 	transport := &transcriptTransport{t: t, steps: append([]transcriptStep(nil), steps...)}
-	driver, err := NewDriver(transport)
+	driver, err := NewDriver(modemadapter.QDC507SMS{}, transport)
 	if err != nil {
 		t.Fatal(err)
 	}

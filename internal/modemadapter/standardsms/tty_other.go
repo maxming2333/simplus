@@ -1,6 +1,6 @@
 //go:build !linux
 
-package qdc507sms
+package standardsms
 
 func openSerialSession(string) (serialSession, error) {
 	return nil, ErrTTYUnsupported

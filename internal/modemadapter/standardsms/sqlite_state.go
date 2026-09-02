@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"context"
@@ -22,11 +22,11 @@ const StateFilename = "qdc507-sms-v2.sqlite3"
 
 func OpenSQLiteStateRoot(ctx context.Context, root string) (*SQLiteStateStore, error) {
 	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator) {
-		return nil, errors.New("QDC507 SMS state root must be an absolute non-root directory")
+		return nil, errors.New("3GPP SMS state root must be an absolute non-root directory")
 	}
 	identity, err := storagefs.PreparePrivateDirectory(root)
 	if err != nil {
-		return nil, fmt.Errorf("prepare QDC507 SMS state root: %w", err)
+		return nil, fmt.Errorf("prepare 3GPP SMS state root: %w", err)
 	}
 	return OpenSQLiteStateStore(ctx, filepath.Join(identity.Path, StateFilename))
 }
@@ -44,12 +44,12 @@ var _ StateStore = (*SQLiteStateStore)(nil)
 
 func OpenSQLiteStateStore(ctx context.Context, path string) (*SQLiteStateStore, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == string(filepath.Separator) {
-		return nil, errors.New("QDC507 SMS state path must be an absolute non-root file")
+		return nil, errors.New("3GPP SMS state path must be an absolute non-root file")
 	}
 	directory := filepath.Dir(path)
 	directoryIdentity, err := storagefs.PreparePrivateDirectory(directory)
 	if err != nil {
-		return nil, fmt.Errorf("prepare QDC507 SMS state directory: %w", err)
+		return nil, fmt.Errorf("prepare 3GPP SMS state directory: %w", err)
 	}
 	existingArtifacts, err := inspectSQLiteArtifacts(path, true)
 	if err != nil {
@@ -59,22 +59,22 @@ func OpenSQLiteStateStore(ctx context.Context, path string) (*SQLiteStateStore, 
 	if !pathExists {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 		if err != nil {
-			return nil, fmt.Errorf("create QDC507 SMS state: %w", err)
+			return nil, fmt.Errorf("create 3GPP SMS state: %w", err)
 		}
 		info, statErr := file.Stat()
 		closeErr := file.Close()
 		if statErr != nil {
-			return nil, fmt.Errorf("stat new QDC507 SMS state: %w", statErr)
+			return nil, fmt.Errorf("stat new 3GPP SMS state: %w", statErr)
 		}
 		if closeErr != nil {
-			return nil, fmt.Errorf("close new QDC507 SMS state: %w", closeErr)
+			return nil, fmt.Errorf("close new 3GPP SMS state: %w", closeErr)
 		}
 		mainIdentity, err = validateSQLiteArtifact(path, info, 0o600)
 		if err != nil {
 			return nil, err
 		}
 		if err := syncSQLiteDirectory(directory); err != nil {
-			return nil, fmt.Errorf("sync new QDC507 SMS state directory entry: %w", err)
+			return nil, fmt.Errorf("sync new 3GPP SMS state directory entry: %w", err)
 		}
 	}
 	query := make(url.Values)
@@ -82,7 +82,7 @@ func OpenSQLiteStateStore(ctx context.Context, path string) (*SQLiteStateStore, 
 	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: query.Encode()}).String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open QDC507 SMS state: %w", err)
+		return nil, fmt.Errorf("open 3GPP SMS state: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
@@ -91,10 +91,10 @@ func OpenSQLiteStateStore(ctx context.Context, path string) (*SQLiteStateStore, 
 		return nil, err
 	}
 	if err := db.PingContext(ctx); err != nil {
-		return closeOnError(fmt.Errorf("ping QDC507 SMS state: %w", err))
+		return closeOnError(fmt.Errorf("ping 3GPP SMS state: %w", err))
 	}
 	if err := requireSQLiteArtifactIdentity(path, mainIdentity); err != nil {
-		return closeOnError(fmt.Errorf("QDC507 SMS state changed before write access: %w", err))
+		return closeOnError(fmt.Errorf("3GPP SMS state changed before write access: %w", err))
 	}
 	for _, statement := range []string{
 		`PRAGMA busy_timeout = 5000`,
@@ -102,27 +102,27 @@ func OpenSQLiteStateStore(ctx context.Context, path string) (*SQLiteStateStore, 
 		`PRAGMA trusted_schema = OFF`,
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
-			return closeOnError(fmt.Errorf("configure QDC507 SMS state: %w", err))
+			return closeOnError(fmt.Errorf("configure 3GPP SMS state: %w", err))
 		}
 	}
 	var journalMode string
 	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode = WAL`).Scan(&journalMode); err != nil || journalMode != "wal" {
-		return closeOnError(fmt.Errorf("enable QDC507 SMS WAL mode: mode=%q error=%w", journalMode, err))
+		return closeOnError(fmt.Errorf("enable 3GPP SMS WAL mode: mode=%q error=%w", journalMode, err))
 	}
 	var version int
 	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
-		return closeOnError(fmt.Errorf("read QDC507 SMS state schema version: %w", err))
+		return closeOnError(fmt.Errorf("read 3GPP SMS state schema version: %w", err))
 	}
 	if version == 0 {
 		if err := initializeSQLiteStateSchema(ctx, db); err != nil {
-			return closeOnError(fmt.Errorf("initialize QDC507 SMS state: %w", err))
+			return closeOnError(fmt.Errorf("initialize 3GPP SMS state: %w", err))
 		}
 		if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
-			return closeOnError(fmt.Errorf("verify QDC507 SMS state schema version: %w", err))
+			return closeOnError(fmt.Errorf("verify 3GPP SMS state schema version: %w", err))
 		}
 	}
 	if version != sqliteStateSchemaVersion {
-		return closeOnError(fmt.Errorf("unsupported QDC507 SMS state schema version %d", version))
+		return closeOnError(fmt.Errorf("unsupported 3GPP SMS state schema version %d", version))
 	}
 	if err := verifySQLiteStateSchema(ctx, db); err != nil {
 		return closeOnError(err)
@@ -134,11 +134,11 @@ func OpenSQLiteStateStore(ctx context.Context, path string) (*SQLiteStateStore, 
 		return closeOnError(err)
 	}
 	if err := requireSQLiteArtifactIdentity(path, mainIdentity); err != nil {
-		return closeOnError(fmt.Errorf("QDC507 SMS state changed while opening: %w", err))
+		return closeOnError(fmt.Errorf("3GPP SMS state changed while opening: %w", err))
 	}
 	directoryAfter, err := storagefs.PreparePrivateDirectory(directory)
 	if err != nil || directoryAfter != directoryIdentity {
-		return closeOnError(errors.New("QDC507 SMS state directory identity changed while opening"))
+		return closeOnError(errors.New("3GPP SMS state directory identity changed while opening"))
 	}
 	return &SQLiteStateStore{db: db, path: path}, nil
 }
@@ -180,7 +180,7 @@ func inspectSQLiteArtifacts(path string, requirePrivateMode bool) (map[string]sq
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("inspect QDC507 SMS state artifact %s: %w", artifact, err)
+			return nil, fmt.Errorf("inspect 3GPP SMS state artifact %s: %w", artifact, err)
 		}
 		mode := os.FileMode(0)
 		if requirePrivateMode {
@@ -197,20 +197,20 @@ func inspectSQLiteArtifacts(path string, requirePrivateMode bool) (map[string]sq
 
 func validateSQLiteArtifact(path string, info os.FileInfo, requiredMode os.FileMode) (sqliteArtifactIdentity, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return sqliteArtifactIdentity{}, fmt.Errorf("QDC507 SMS state artifact is not a regular file: %s", path)
+		return sqliteArtifactIdentity{}, fmt.Errorf("3GPP SMS state artifact is not a regular file: %s", path)
 	}
 	if !ownedByCurrentUser(info) {
-		return sqliteArtifactIdentity{}, fmt.Errorf("QDC507 SMS state artifact is not owned by the current uid: %s", path)
+		return sqliteArtifactIdentity{}, fmt.Errorf("3GPP SMS state artifact is not owned by the current uid: %s", path)
 	}
 	if linkCount(info) != 1 {
-		return sqliteArtifactIdentity{}, fmt.Errorf("QDC507 SMS state artifact must have exactly one hard link: %s", path)
+		return sqliteArtifactIdentity{}, fmt.Errorf("3GPP SMS state artifact must have exactly one hard link: %s", path)
 	}
 	if requiredMode != 0 && info.Mode().Perm() != requiredMode {
-		return sqliteArtifactIdentity{}, fmt.Errorf("QDC507 SMS state artifact permissions must be %04o, found %04o: %s", requiredMode, info.Mode().Perm(), path)
+		return sqliteArtifactIdentity{}, fmt.Errorf("3GPP SMS state artifact permissions must be %04o, found %04o: %s", requiredMode, info.Mode().Perm(), path)
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return sqliteArtifactIdentity{}, fmt.Errorf("QDC507 SMS state artifact identity is unavailable: %s", path)
+		return sqliteArtifactIdentity{}, fmt.Errorf("3GPP SMS state artifact identity is unavailable: %s", path)
 	}
 	return sqliteArtifactIdentity{device: uint64(stat.Dev), inode: uint64(stat.Ino)}, nil
 }
@@ -225,7 +225,7 @@ func requireSQLiteArtifactIdentity(path string, expected sqliteArtifactIdentity)
 		return err
 	}
 	if actual != expected {
-		return errors.New("QDC507 SMS state artifact device/inode changed")
+		return errors.New("3GPP SMS state artifact device/inode changed")
 	}
 	return nil
 }
@@ -237,7 +237,7 @@ func secureNewSQLiteArtifacts(path string, existing map[string]sqliteArtifactIde
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("inspect QDC507 SMS state artifact %s: %w", artifact, err)
+			return fmt.Errorf("inspect 3GPP SMS state artifact %s: %w", artifact, err)
 		}
 		identity, err := validateSQLiteArtifact(artifact, info, 0)
 		if err != nil {
@@ -245,37 +245,37 @@ func secureNewSQLiteArtifacts(path string, existing map[string]sqliteArtifactIde
 		}
 		if expected, found := existing[artifact]; found {
 			if identity != expected {
-				return fmt.Errorf("QDC507 SMS state artifact identity changed while opening: %s", artifact)
+				return fmt.Errorf("3GPP SMS state artifact identity changed while opening: %s", artifact)
 			}
 			continue
 		}
 		fd, err := syscall.Open(artifact, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 		if err != nil {
-			return fmt.Errorf("open new QDC507 SMS state artifact securely: %w", err)
+			return fmt.Errorf("open new 3GPP SMS state artifact securely: %w", err)
 		}
 		if err := syscall.Fchmod(fd, 0o600); err != nil {
 			_ = syscall.Close(fd)
-			return fmt.Errorf("secure new QDC507 SMS state artifact: %w", err)
+			return fmt.Errorf("secure new 3GPP SMS state artifact: %w", err)
 		}
 		file := os.NewFile(uintptr(fd), artifact)
 		if file == nil {
 			_ = syscall.Close(fd)
-			return errors.New("open new QDC507 SMS state artifact: invalid descriptor")
+			return errors.New("open new 3GPP SMS state artifact: invalid descriptor")
 		}
 		securedInfo, statErr := file.Stat()
 		closeErr := file.Close()
 		if statErr != nil {
-			return fmt.Errorf("stat secured QDC507 SMS state artifact: %w", statErr)
+			return fmt.Errorf("stat secured 3GPP SMS state artifact: %w", statErr)
 		}
 		securedIdentity, validateErr := validateSQLiteArtifact(artifact, securedInfo, 0o600)
 		if validateErr != nil {
 			return validateErr
 		}
 		if closeErr != nil {
-			return fmt.Errorf("close secured QDC507 SMS state artifact: %w", closeErr)
+			return fmt.Errorf("close secured 3GPP SMS state artifact: %w", closeErr)
 		}
 		if err := requireSQLiteArtifactIdentity(artifact, securedIdentity); err != nil {
-			return fmt.Errorf("revalidate secured QDC507 SMS state artifact: %w", err)
+			return fmt.Errorf("revalidate secured 3GPP SMS state artifact: %w", err)
 		}
 	}
 	return nil
@@ -310,27 +310,27 @@ func initializeSQLiteStateSchema(ctx context.Context, db *sql.DB) error {
 func verifySQLiteStateSchema(ctx context.Context, db *sql.DB) error {
 	actual, err := readSQLiteSchema(ctx, db)
 	if err != nil {
-		return fmt.Errorf("read QDC507 SMS state schema: %w", err)
+		return fmt.Errorf("read 3GPP SMS state schema: %w", err)
 	}
 	expectedDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		return fmt.Errorf("construct expected QDC507 SMS state schema: %w", err)
+		return fmt.Errorf("construct expected 3GPP SMS state schema: %w", err)
 	}
 	defer expectedDB.Close()
 	expectedDB.SetMaxOpenConns(1)
 	if err := initializeSQLiteStateSchema(ctx, expectedDB); err != nil {
-		return fmt.Errorf("construct expected QDC507 SMS state schema: %w", err)
+		return fmt.Errorf("construct expected 3GPP SMS state schema: %w", err)
 	}
 	expected, err := readSQLiteSchema(ctx, expectedDB)
 	if err != nil {
-		return fmt.Errorf("read expected QDC507 SMS state schema: %w", err)
+		return fmt.Errorf("read expected 3GPP SMS state schema: %w", err)
 	}
 	if !reflect.DeepEqual(actual, expected) {
-		return errors.New("QDC507 SMS state schema manifest mismatch")
+		return errors.New("3GPP SMS state schema manifest mismatch")
 	}
 	var integrity string
 	if err := db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&integrity); err != nil || integrity != "ok" {
-		return fmt.Errorf("QDC507 SMS state integrity check failed: result=%q error=%w", integrity, err)
+		return fmt.Errorf("3GPP SMS state integrity check failed: result=%q error=%w", integrity, err)
 	}
 	return nil
 }
@@ -399,43 +399,43 @@ func (store *SQLiteStateStore) PutInbound(ctx context.Context, record InboundRec
 			return InboundRecord{}, false, ErrStateConflict
 		}
 		if err := tx.Commit(); err != nil {
-			return InboundRecord{}, false, fmt.Errorf("commit QDC507 inbound SMS replay: %w", err)
+			return InboundRecord{}, false, fmt.Errorf("commit 3GPP inbound SMS replay: %w", err)
 		}
 		return existing, true, nil
 	}
 	segments, err := json.Marshal(record.Segments)
 	if err != nil {
-		return InboundRecord{}, false, fmt.Errorf("encode QDC507 inbound SMS segments: %w", err)
+		return InboundRecord{}, false, fmt.Errorf("encode 3GPP inbound SMS segments: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO inbound_messages (message_id, subscription_key, sender, body, received_at_ns, segments_json, acknowledged)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 `, record.MessageID, record.SubscriptionKey, record.Sender, record.Body, record.ReceivedAt.UnixNano(), segments, boolInteger(record.Acknowledged)); err != nil {
-		return InboundRecord{}, false, fmt.Errorf("insert QDC507 inbound SMS: %w", err)
+		return InboundRecord{}, false, fmt.Errorf("insert 3GPP inbound SMS: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return InboundRecord{}, false, fmt.Errorf("commit QDC507 inbound SMS: %w", err)
+		return InboundRecord{}, false, fmt.Errorf("commit 3GPP inbound SMS: %w", err)
 	}
 	return cloneInbound(record), false, nil
 }
 
 func (store *SQLiteStateStore) FindInbound(ctx context.Context, subscriptionKey, messageID string) (InboundRecord, bool, error) {
 	if store == nil || store.db == nil {
-		return InboundRecord{}, false, errors.New("QDC507 SMS state is unavailable")
+		return InboundRecord{}, false, errors.New("3GPP SMS state is unavailable")
 	}
 	return findSQLiteInbound(ctx, store.db, subscriptionKey, messageID)
 }
 
 func (store *SQLiteStateStore) ListInbound(ctx context.Context, subscriptionKey string) ([]InboundRecord, error) {
 	if store == nil || store.db == nil {
-		return nil, errors.New("QDC507 SMS state is unavailable")
+		return nil, errors.New("3GPP SMS state is unavailable")
 	}
 	rows, err := store.db.QueryContext(ctx, inboundSelect+`
  WHERE subscription_key = ? AND acknowledged = 0
  ORDER BY received_at_ns, message_id
 `, subscriptionKey)
 	if err != nil {
-		return nil, fmt.Errorf("query QDC507 inbound SMS: %w", err)
+		return nil, fmt.Errorf("query 3GPP inbound SMS: %w", err)
 	}
 	defer rows.Close()
 	records := make([]InboundRecord, 0)
@@ -447,7 +447,7 @@ func (store *SQLiteStateStore) ListInbound(ctx context.Context, subscriptionKey 
 		records = append(records, record)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate QDC507 inbound SMS: %w", err)
+		return nil, fmt.Errorf("iterate 3GPP inbound SMS: %w", err)
 	}
 	return records, nil
 }
@@ -470,47 +470,47 @@ func (store *SQLiteStateStore) UpdateInbound(ctx context.Context, record Inbound
 	}
 	segments, err := json.Marshal(record.Segments)
 	if err != nil {
-		return fmt.Errorf("encode QDC507 inbound SMS progress: %w", err)
+		return fmt.Errorf("encode 3GPP inbound SMS progress: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE inbound_messages SET segments_json = ?, acknowledged = ? WHERE message_id = ? AND subscription_key = ?
 `, segments, boolInteger(record.Acknowledged), record.MessageID, record.SubscriptionKey); err != nil {
-		return fmt.Errorf("update QDC507 inbound SMS progress: %w", err)
+		return fmt.Errorf("update 3GPP inbound SMS progress: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit QDC507 inbound SMS progress: %w", err)
+		return fmt.Errorf("commit 3GPP inbound SMS progress: %w", err)
 	}
 	return nil
 }
 
 func (store *SQLiteStateStore) PutOperation(ctx context.Context, record operationRecord) (operationRecord, bool, error) {
 	if store == nil {
-		return operationRecord{}, false, errors.New("QDC507 SMS state is unavailable")
+		return operationRecord{}, false, errors.New("3GPP SMS state is unavailable")
 	}
 	return putSQLiteOperation(ctx, store.db, record)
 }
 
 func (store *SQLiteStateStore) UpdateOperation(ctx context.Context, record operationRecord) error {
 	if store == nil {
-		return errors.New("QDC507 SMS state is unavailable")
+		return errors.New("3GPP SMS state is unavailable")
 	}
 	return updateSQLiteOperation(ctx, store.db, record)
 }
 
 func (store *SQLiteStateStore) DeleteOperation(ctx context.Context, record operationRecord) error {
 	if store == nil {
-		return errors.New("QDC507 SMS state is unavailable")
+		return errors.New("3GPP SMS state is unavailable")
 	}
 	return deleteSQLiteOperation(ctx, store.db, record)
 }
 
 func (store *SQLiteStateStore) begin(ctx context.Context) (*sql.Tx, error) {
 	if store == nil || store.db == nil {
-		return nil, errors.New("QDC507 SMS state is unavailable")
+		return nil, errors.New("3GPP SMS state is unavailable")
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("begin QDC507 SMS state transaction: %w", err)
+		return nil, fmt.Errorf("begin 3GPP SMS state transaction: %w", err)
 	}
 	return tx, nil
 }
@@ -545,15 +545,15 @@ func scanSQLiteInbound(scanner sqliteScanner) (InboundRecord, error) {
 		return InboundRecord{}, err
 	}
 	if acknowledged != 0 && acknowledged != 1 {
-		return InboundRecord{}, errors.New("QDC507 inbound SMS has an invalid acknowledged state")
+		return InboundRecord{}, errors.New("3GPP inbound SMS has an invalid acknowledged state")
 	}
 	if err := json.Unmarshal(segments, &record.Segments); err != nil {
-		return InboundRecord{}, fmt.Errorf("decode QDC507 inbound SMS segments: %w", err)
+		return InboundRecord{}, fmt.Errorf("decode 3GPP inbound SMS segments: %w", err)
 	}
 	record.ReceivedAt = time.Unix(0, receivedAt).UTC()
 	record.Acknowledged = acknowledged == 1
 	if err := validInboundRecord(record); err != nil {
-		return InboundRecord{}, fmt.Errorf("validate stored QDC507 inbound SMS: %w", err)
+		return InboundRecord{}, fmt.Errorf("validate stored 3GPP inbound SMS: %w", err)
 	}
 	return record, nil
 }
@@ -570,21 +570,21 @@ FROM operations WHERE operation_id = ?
 	); errors.Is(err, sql.ErrNoRows) {
 		return operationRecord{}, false, nil
 	} else if err != nil {
-		return operationRecord{}, false, fmt.Errorf("read QDC507 SMS operation: %w", err)
+		return operationRecord{}, false, fmt.Errorf("read 3GPP SMS operation: %w", err)
 	}
 	if len(digest) != len(record.RequestDigest) || !validOperation(record) ||
 		(record.State != operationAccepted && record.State != operationSucceeded && record.State != operationUnknown) {
-		return operationRecord{}, false, errors.New("stored QDC507 SMS operation is invalid")
+		return operationRecord{}, false, errors.New("stored 3GPP SMS operation is invalid")
 	}
 	copy(record.RequestDigest[:], digest)
 	if record.Kind == operationSend && record.State == operationSucceeded {
 		record.Submission.OperationID = record.OperationID
 		record.Submission.SubmittedAt = time.Unix(0, submittedAt).UTC()
 		if record.Submission.MessageID == "" || submittedAt == 0 {
-			return operationRecord{}, false, errors.New("stored QDC507 SMS submission is invalid")
+			return operationRecord{}, false, errors.New("stored 3GPP SMS submission is invalid")
 		}
 	} else if record.Submission.MessageID != "" || submittedAt != 0 {
-		return operationRecord{}, false, errors.New("stored QDC507 SMS operation has an unexpected submission")
+		return operationRecord{}, false, errors.New("stored 3GPP SMS operation has an unexpected submission")
 	}
 	return record, true, nil
 }

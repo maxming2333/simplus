@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"crypto/sha256"
@@ -14,11 +14,11 @@ import (
 	"github.com/leonfox28/simplus/internal/smscodec"
 )
 
-var ErrMultipartAmbiguous = errors.New("QDC507 multipart SMS is ambiguous")
+var ErrMultipartAmbiguous = errors.New("3GPP multipart SMS is ambiguous")
 
 var (
-	errInboundPDUDecode         = errors.New("QDC507 inbound SMS PDU structure is invalid")
-	errInboundContentValidation = errors.New("QDC507 inbound SMS decoded content is invalid")
+	errInboundPDUDecode         = errors.New("3GPP inbound SMS PDU structure is invalid")
+	errInboundContentValidation = errors.New("3GPP inbound SMS decoded content is invalid")
 )
 
 const maxMultipartAssemblySpan = 10 * time.Minute
@@ -61,7 +61,7 @@ type multipartKey struct {
 
 func assembleInbound(subscriptionKey string, stored []StoredPDU) ([]InboundRecord, error) {
 	if !subscriptionKeyPattern.MatchString(subscriptionKey) {
-		return nil, errors.New("QDC507 inbound SMS requires a subscription key")
+		return nil, errors.New("3GPP inbound SMS requires a subscription key")
 	}
 	seenIndexes := make(map[int]struct{}, len(stored))
 	singles := make([]decodedStoredPDU, 0, len(stored))
@@ -73,12 +73,12 @@ func assembleInbound(subscriptionKey string, stored []StoredPDU) ([]InboundRecor
 			continue
 		}
 		if _, duplicate := seenIndexes[candidate.Index]; duplicate {
-			return nil, fmt.Errorf("%w: duplicate QDC507 SMS storage index %d", errInboundPDUDecode, candidate.Index)
+			return nil, fmt.Errorf("%w: duplicate 3GPP SMS storage index %d", errInboundPDUDecode, candidate.Index)
 		}
 		seenIndexes[candidate.Index] = struct{}{}
 		delivered, err := smscodec.DecodeDeliverPDU(candidate.PDU)
 		if err != nil {
-			return nil, fmt.Errorf("%w: decode QDC507 SMS storage index %d: %v", errInboundPDUDecode, candidate.Index, err)
+			return nil, fmt.Errorf("%w: decode 3GPP SMS storage index %d: %v", errInboundPDUDecode, candidate.Index, err)
 		}
 		decoded := decodedStoredPDU{stored: candidate, delivered: delivered, digest: sha256.Sum256(candidate.PDU)}
 		if delivered.Segment.Total == 1 {
@@ -154,10 +154,10 @@ func inboundRecord(subscriptionKey string, decoded []decodedStoredPDU) (InboundR
 	}
 	body, err := smscodec.Decode(segments)
 	if err != nil {
-		return InboundRecord{}, fmt.Errorf("assemble QDC507 SMS: %w", err)
+		return InboundRecord{}, fmt.Errorf("assemble 3GPP SMS: %w", err)
 	}
 	if strings.TrimSpace(body) == "" || !utf8.ValidString(body) || utf8.RuneCountInString(body) > 1600 || len(body) > 6400 {
-		return InboundRecord{}, errors.New("assembled QDC507 SMS is outside the Agent message limits")
+		return InboundRecord{}, errors.New("assembled 3GPP SMS is outside the Agent message limits")
 	}
 	return InboundRecord{
 		MessageID: stableInboundMessageID(subscriptionKey, decoded), SubscriptionKey: subscriptionKey,

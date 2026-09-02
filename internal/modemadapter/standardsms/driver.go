@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"context"
@@ -31,11 +31,11 @@ const (
 )
 
 var (
-	ErrControlEndpoint    = errors.New("QDC507 SMS control endpoint is unavailable")
-	ErrTransport          = errors.New("QDC507 SMS AT transport failed")
-	ErrModemRejected      = errors.New("QDC507 modem rejected the SMS operation")
-	ErrResponseInvalid    = errors.New("QDC507 SMS AT response is invalid")
-	ErrSendOutcomeUnknown = errors.New("QDC507 SMS send outcome is unknown")
+	ErrControlEndpoint    = errors.New("3GPP SMS control endpoint is unavailable")
+	ErrTransport          = errors.New("3GPP SMS AT transport failed")
+	ErrModemRejected      = errors.New("modem rejected the SMS operation")
+	ErrResponseInvalid    = errors.New("3GPP SMS AT response is invalid")
+	ErrSendOutcomeUnknown = errors.New("3GPP SMS send outcome is unknown")
 )
 
 // Returned lines are trimmed AT result lines without command echo or prompt.
@@ -45,6 +45,7 @@ type Transport interface {
 }
 
 type Driver struct {
+	model     modemadapter.Adapter
 	transport Transport
 }
 
@@ -73,9 +74,9 @@ type SendFailure struct {
 
 func (failure *SendFailure) Error() string {
 	if failure == nil {
-		return "QDC507 SMS send failed"
+		return "3GPP SMS send failed"
 	}
-	return fmt.Sprintf("QDC507 SMS send failed after %d of %d parts: %v", failure.CompletedParts, failure.TotalParts, failure.Cause)
+	return fmt.Sprintf("3GPP SMS send failed after %d of %d parts: %v", failure.CompletedParts, failure.TotalParts, failure.Cause)
 }
 
 func (failure *SendFailure) Unwrap() error {
@@ -95,7 +96,7 @@ type ModemError struct {
 
 func (failure *ModemError) Error() string {
 	if failure == nil || failure.Kind == nil {
-		return "QDC507 SMS operation failed"
+		return "3GPP SMS operation failed"
 	}
 	if failure.HasCMSCode {
 		return fmt.Sprintf("%v (CMS code %d)", failure.Kind, failure.CMSCode)
@@ -120,11 +121,24 @@ func (failure *ModemError) Is(target error) bool {
 	return target == agentapi.ErrSMSMessageNotFound && failure.HasCMSCode && failure.CMSCode == 321
 }
 
-func NewDriver(transport Transport) (*Driver, error) {
-	if transport == nil {
-		return nil, errors.New("QDC507 SMS transcript transport is required")
+// NewDriver binds the generic 3GPP TS 27.005 PDU-mode SMS flow to one model
+// adapter. The model owns profile identity and control-endpoint resolution; the
+// command set itself is standard and shared by every model that passes its own
+// SMS evidence.
+func NewDriver(model modemadapter.Adapter, transport Transport) (*Driver, error) {
+	if model == nil || transport == nil {
+		return nil, errors.New("3GPP SMS driver requires a model adapter and a transcript transport")
 	}
-	return &Driver{transport: transport}, nil
+	return &Driver{model: model, transport: transport}, nil
+}
+
+// Profile reports the model this driver serves, so the adapter layer can reject
+// a runtime target that belongs to a different model.
+func (driver *Driver) Profile() string {
+	if driver == nil || driver.model == nil {
+		return ""
+	}
+	return driver.model.Profile()
 }
 
 func (driver *Driver) List(ctx context.Context, device agentapi.DeviceReport) ([]StoredPDU, error) {
@@ -145,7 +159,7 @@ func (driver *Driver) List(ctx context.Context, device agentapi.DeviceReport) ([
 
 func (driver *Driver) Read(ctx context.Context, device agentapi.DeviceReport, index int) (StoredPDU, error) {
 	if index < 0 || index > maxStorageIndex {
-		return StoredPDU{}, errors.New("QDC507 SMS storage index is invalid")
+		return StoredPDU{}, errors.New("3GPP SMS storage index is invalid")
 	}
 	endpoint, err := driver.prepare(ctx, device)
 	if err != nil {
@@ -164,7 +178,7 @@ func (driver *Driver) Read(ctx context.Context, device agentapi.DeviceReport, in
 
 func (driver *Driver) Delete(ctx context.Context, device agentapi.DeviceReport, index int) error {
 	if index < 0 || index > maxStorageIndex {
-		return errors.New("QDC507 SMS storage index is invalid")
+		return errors.New("3GPP SMS storage index is invalid")
 	}
 	endpoint, err := driver.prepare(ctx, device)
 	if err != nil {
@@ -188,15 +202,16 @@ func (driver *Driver) Send(ctx context.Context, device agentapi.DeviceReport, de
 	if driver == nil {
 		return SendResult{}, ErrControlEndpoint
 	}
-	return dispatchPDU(ctx, driver.transport, device, destination, text)
+	return dispatchPDU(ctx, driver.model, driver.transport, device, destination, text)
 }
 
-func dispatchPDU(ctx context.Context, transport Transport, device agentapi.DeviceReport, destination, text string) (SendResult, error) {
-	return dispatchSMS(ctx, transport.Command, transport.Prompt, device, destination, text)
+func dispatchPDU(ctx context.Context, model modemadapter.Adapter, transport Transport, device agentapi.DeviceReport, destination, text string) (SendResult, error) {
+	return dispatchSMS(ctx, model, transport.Command, transport.Prompt, device, destination, text)
 }
 
 func dispatchSMS(
 	ctx context.Context,
+	model modemadapter.Adapter,
 	command func(context.Context, string, string, time.Duration) ([]string, error),
 	prompt func(context.Context, string, string, []byte, time.Duration) ([]string, error),
 	device agentapi.DeviceReport,
@@ -208,7 +223,7 @@ func dispatchSMS(
 	if err != nil {
 		return SendResult{}, err
 	}
-	endpoint, err := prepareSMSCommands(ctx, command, device)
+	endpoint, err := prepareSMSCommands(ctx, model, command, device)
 	if err != nil {
 		return SendResult{}, &SendFailure{TotalParts: len(segments), Cause: err}
 	}
@@ -217,7 +232,7 @@ func dispatchSMS(
 		messageReference := byte(index)
 		if segment.Total > 1 {
 			if segment.Reference > 255 {
-				return SendResult{}, errors.New("QDC507 outbound SMS concatenation reference is invalid")
+				return SendResult{}, errors.New("3GPP outbound SMS concatenation reference is invalid")
 			}
 			messageReference = byte(segment.Reference) + byte(index)
 		}
@@ -251,21 +266,21 @@ func (driver *Driver) prepare(ctx context.Context, device agentapi.DeviceReport)
 	if driver == nil {
 		return "", ErrControlEndpoint
 	}
-	return prepareSMS(ctx, driver.transport, device)
+	return prepareSMS(ctx, driver.model, driver.transport, device)
 }
 
-func prepareSMS(ctx context.Context, transport Transport, device agentapi.DeviceReport) (string, error) {
-	if transport == nil || device.Profile != agentapi.ProfileQDC507 {
+func prepareSMS(ctx context.Context, model modemadapter.Adapter, transport Transport, device agentapi.DeviceReport) (string, error) {
+	if transport == nil {
 		return "", ErrControlEndpoint
 	}
-	return prepareSMSCommands(ctx, transport.Command, device)
+	return prepareSMSCommands(ctx, model, transport.Command, device)
 }
 
-func prepareSMSCommands(ctx context.Context, command func(context.Context, string, string, time.Duration) ([]string, error), device agentapi.DeviceReport) (string, error) {
-	if command == nil || device.Profile != agentapi.ProfileQDC507 {
+func prepareSMSCommands(ctx context.Context, model modemadapter.Adapter, command func(context.Context, string, string, time.Duration) ([]string, error), device agentapi.DeviceReport) (string, error) {
+	if model == nil || command == nil || device.Profile != model.Profile() {
 		return "", ErrControlEndpoint
 	}
-	endpoint, ok := (modemadapter.QDC507SMS{}).Endpoint(device, modemadapter.EndpointPrimaryAT)
+	endpoint, ok := model.Endpoint(device, modemadapter.EndpointPrimaryAT)
 	if !ok {
 		return "", ErrControlEndpoint
 	}

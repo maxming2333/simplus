@@ -1,4 +1,4 @@
-package qdc507sms
+package standardsms
 
 import (
 	"bytes"
@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/leonfox28/simplus/internal/modemadapter"
 )
 
 type serialRead struct {
@@ -189,7 +191,7 @@ func TestDriverConfirmsSubmitWhenTTYEchoesExactPayload(t *testing.T) {
 		opened++
 		return session, nil
 	}}
-	driver, err := NewDriver(transport)
+	driver, err := NewDriver(modemadapter.QDC507SMS{}, transport)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +228,7 @@ func TestDriverKeepsDuplicateOrUnexpectedSubmitEchoOutcomeUnknown(t *testing.T) 
 				opened++
 				return session, nil
 			}}
-			driver, err := NewDriver(transport)
+			driver, err := NewDriver(modemadapter.QDC507SMS{}, transport)
 			if err != nil {
 				t.Fatal(err)
 			}
