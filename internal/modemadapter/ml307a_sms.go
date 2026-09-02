@@ -40,11 +40,17 @@ func (ML307ASMS) Matches(descriptor USBDescriptor) bool { return ML307A{}.Matche
 // listing, PDU read with a matching unique body, and acknowledgement that
 // removed the message from storage.
 //
-// That HIL ran over a bridged control endpoint, so the evidence text says so.
-// A bridged device additionally has its own evidence policy in
-// internal/hardwareprobe: without an explicit operator attestation every
-// observed status there is downgraded, so this promotion does not by itself make
-// a bridged modem operable.
+// That loopback is reproducible but not yet reliable: repeated attempts over the
+// same bridge succeeded roughly one time in five, because the caller's 120s SMS
+// dispatch budget exceeds what an MCU-class bridge can occupy itself for, and a
+// submission whose terminal status arrives late is correctly reported as an
+// uncertain outcome. Storage inspection confirmed several of those uncertain
+// submissions had in fact been delivered.
+//
+// sms-control therefore stays unverified. One accepted round trip proves the
+// command set and the decode path; it does not prove an operable capability, and
+// internal/application/inventory maps only observed evidence to business
+// capabilities. Promote this once the loopback is repeatable.
 func (adapter ML307ASMS) Capabilities(device agentapi.DeviceReport) []agentapi.CapabilityEvidence {
 	capabilities := ML307A{}.Capabilities(device)
 	for index := range capabilities {
@@ -52,9 +58,9 @@ func (adapter ML307ASMS) Capabilities(device agentapi.DeviceReport) []agentapi.C
 			continue
 		}
 		if hasEndpoint(device, agentapi.EndpointTTY, 2) {
-			capabilities[index].Status = agentapi.EvidenceObserved
+			capabilities[index].Status = agentapi.EvidenceUnverified
 			capabilities[index].Evidence = []string{
-				"designated-SIM cellular SMS loopback accepted: submit-prompt submission, storage delivery, PDU read and acknowledged deletion",
+				"designated-SIM loopback completed submit-prompt submission, storage delivery, PDU read and acknowledged deletion, but repeats were not reliable; operable SMS requires a repeatable round trip",
 			}
 		}
 		break

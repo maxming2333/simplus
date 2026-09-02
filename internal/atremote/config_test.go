@@ -95,6 +95,11 @@ func TestLoadConfigRejectsInvalidDefinitions(t *testing.T) {
 		{name: "timeout below minimum", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","requestTimeoutMs":10}]}`},
 		{name: "timeout above maximum", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","requestTimeoutMs":600000}]}`},
 		{name: "not json", body: `bridges`},
+		{name: "reserved header", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","headers":{"Content-Type":"text/plain"}}]}`},
+		{name: "control character header", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","headers":{"X-Token":"a\nb"}}]}`},
+		{name: "command timeout above bound", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","commandTimeoutMs":600000}]}`},
+		{name: "exchange timeout below bound", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","exchangeTimeoutMs":10}]}`},
+		{name: "negative exchange timeout", body: `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a","exchangeTimeoutMs":-1}]}`},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			if _, err := LoadConfig(writeConfig(t, testCase.body, 0o600)); err == nil {
@@ -179,5 +184,34 @@ func TestNewTargetRejectsUnbuiltTargetsInOpener(t *testing.T) {
 	}
 	if _, err := NewOpener([]Target{target, target}); err == nil {
 		t.Fatal("NewOpener accepted duplicate bridge keys")
+	}
+}
+
+func TestLoadConfigCarriesTunableTransportOptions(t *testing.T) {
+	config, err := LoadConfig(writeConfig(t, `{"bridges":[{"key":"a","baseUrl":"http://192.0.2.10","profile":"ml307a",
+      "commandTimeoutMs":8000,"exchangeTimeoutMs":45000,"headers":{"X-Bridge-Token":"opaque"}}]}`, 0o600))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	target := config.Bridges[0].Target
+	if target.CommandTimeout != 8*time.Second || target.ExchangeTimeout != 45*time.Second {
+		t.Fatalf("timeouts = %s / %s", target.CommandTimeout, target.ExchangeTimeout)
+	}
+	if target.Headers["X-Bridge-Token"] != "opaque" || len(target.Headers) != 1 {
+		t.Fatalf("headers = %#v", target.Headers)
+	}
+}
+
+func TestLoadConfigDefaultsTunableTransportOptions(t *testing.T) {
+	config, err := LoadConfig(writeConfig(t, validConfig, 0o600))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	target := config.Bridges[0].Target
+	if target.CommandTimeout != defaultCommandTimeout || target.ExchangeTimeout != defaultExchangeTimeout {
+		t.Fatalf("defaults = %s / %s", target.CommandTimeout, target.ExchangeTimeout)
+	}
+	if len(target.Headers) != 0 {
+		t.Fatalf("headers = %#v", target.Headers)
 	}
 }

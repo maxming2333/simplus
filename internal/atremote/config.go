@@ -50,13 +50,16 @@ type configFile struct {
 }
 
 type configBridge struct {
-	Key                string `json:"key"`
-	BaseURL            string `json:"baseUrl"`
-	Profile            string `json:"profile"`
-	Username           string `json:"username"`
-	Password           string `json:"password"`
-	RequestTimeoutMS   int64  `json:"requestTimeoutMs"`
-	AttestCapabilities bool   `json:"attestCapabilities"`
+	Key                string            `json:"key"`
+	BaseURL            string            `json:"baseUrl"`
+	Profile            string            `json:"profile"`
+	Username           string            `json:"username"`
+	Password           string            `json:"password"`
+	RequestTimeoutMS   int64             `json:"requestTimeoutMs"`
+	CommandTimeoutMS   int64             `json:"commandTimeoutMs"`
+	ExchangeTimeoutMS  int64             `json:"exchangeTimeoutMs"`
+	Headers            map[string]string `json:"headers"`
+	AttestCapabilities bool              `json:"attestCapabilities"`
 }
 
 // LoadConfig reads and strictly validates the private bridge configuration.
@@ -126,7 +129,19 @@ func parseConfig(body []byte) (Config, error) {
 		if entry.RequestTimeoutMS < 0 || entry.RequestTimeoutMS > maximumRequestTimeout.Milliseconds() {
 			return Config{}, fmt.Errorf("remote AT bridge %q request timeout must be from 1000ms through 120000ms", entry.Key)
 		}
-		target, err := NewTarget(entry.Key, entry.BaseURL, entry.Username, entry.Password, time.Duration(entry.RequestTimeoutMS)*time.Millisecond)
+		for label, value := range map[string]int64{
+			"command timeout": entry.CommandTimeoutMS, "exchange timeout": entry.ExchangeTimeoutMS,
+		} {
+			if value < 0 || value > maximumBoundedTimeout.Milliseconds() {
+				return Config{}, fmt.Errorf("remote AT bridge %q %s must be from 1000ms through 180000ms", entry.Key, label)
+			}
+		}
+		target, err := NewTargetWithOptions(entry.Key, entry.BaseURL, entry.Username, entry.Password, TargetOptions{
+			RequestTimeout:  time.Duration(entry.RequestTimeoutMS) * time.Millisecond,
+			CommandTimeout:  time.Duration(entry.CommandTimeoutMS) * time.Millisecond,
+			ExchangeTimeout: time.Duration(entry.ExchangeTimeoutMS) * time.Millisecond,
+			Headers:         entry.Headers,
+		})
 		if err != nil {
 			return Config{}, err
 		}

@@ -76,7 +76,7 @@ func (current *session) Query(ctx context.Context, command string, timeout time.
 	if command == "" || len(command) > maximumCommandLength || strings.ContainsAny(command, "\r\n") {
 		return nil, ErrCommandInvalid
 	}
-	bounded := boundedQueryTimeout(timeout)
+	bounded := boundedQueryTimeout(timeout, current.target.CommandTimeout)
 	payload, err := json.Marshal(commandRequest{
 		Session: current.token, Command: command, TimeoutMS: bounded.Milliseconds(),
 	})
@@ -146,6 +146,11 @@ func (current *session) do(ctx context.Context, method, path string, payload []b
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	// Configured headers are applied before Basic auth so a bridge that
+	// authenticates differently can still not displace an explicit credential.
+	for name, value := range current.target.Headers {
+		request.Header.Set(name, value)
+	}
 	if current.target.Username != "" {
 		request.SetBasicAuth(current.target.Username, current.target.Password)
 	}
@@ -200,13 +205,22 @@ func normalizeLines(raw []string, command string) ([]string, error) {
 	return lines, nil
 }
 
-// boundedQueryTimeout clamps a caller timeout into the range the bridge accepts.
-func boundedQueryTimeout(timeout time.Duration) time.Duration {
+// boundedQueryTimeout clamps a caller timeout into what this bridge accepts.
+//
+// The ceiling is per-bridge on purpose. A caller's budget is chosen for a
+// locally attached modem; a bridge may only be able to occupy itself for a
+// fraction of it, and exceeding that makes the bridge unresponsive instead of
+// producing a useful answer. Clamping here keeps the caller's contract intact
+// and turns the difference into an explicit bounded outcome.
+func boundedQueryTimeout(timeout, ceiling time.Duration) time.Duration {
+	if ceiling <= 0 || ceiling > maximumQueryTimeout {
+		ceiling = maximumQueryTimeout
+	}
 	if timeout < minimumQueryTimeout {
 		return minimumQueryTimeout
 	}
-	if timeout > maximumQueryTimeout {
-		return maximumQueryTimeout
+	if timeout > ceiling {
+		return ceiling
 	}
 	return timeout
 }

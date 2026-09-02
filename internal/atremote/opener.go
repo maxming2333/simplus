@@ -25,7 +25,27 @@ const (
 	maximumRequestTimeout = 120 * time.Second
 
 	maximumTokenLength = 128
+
+	defaultCommandTimeout  = 20 * time.Second
+	defaultExchangeTimeout = 30 * time.Second
+	minimumBoundedTimeout  = time.Second
+	maximumBoundedTimeout  = 180 * time.Second
+
+	maximumHeaderCount      = 8
+	maximumHeaderNameLength = 64
+	maximumHeaderValueSize  = 1024
 )
+
+// reservedHeaders may not be supplied by configuration: they either frame the
+// request body or are hop-by-hop, so overriding them would change what the
+// bridge receives rather than how it authenticates.
+var reservedHeaders = map[string]bool{
+	"host": true, "content-type": true, "content-length": true, "accept": true,
+	"connection": true, "transfer-encoding": true, "expect": true, "upgrade": true,
+	"te": true, "trailer": true, "proxy-authorization": true, "proxy-connection": true,
+}
+
+var headerNamePattern = regexp.MustCompile(`^[A-Za-z0-9!#$%&'*+.^_` + "`" + `|~-]{1,64}$`)
 
 var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,128}$`)
 
@@ -33,10 +53,25 @@ var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,128}$`)
 // assembled in cmd/simplus-agent from a private configuration file; no Web, API
 // or application caller can supply or observe one.
 type Target struct {
-	Key            string
-	Username       string
-	Password       string
+	Key      string
+	Username string
+	Password string
+
+	// RequestTimeout bounds opening and closing a conversation.
 	RequestTimeout time.Duration
+	// CommandTimeout caps an ordinary command regardless of what the caller asks.
+	CommandTimeout time.Duration
+	// ExchangeTimeout caps a prompted-payload submission regardless of what the
+	// caller asks. It exists because a caller's dispatch budget is chosen for a
+	// locally attached modem, while a bridge may only be able to occupy itself
+	// for a fraction of that: exceeding the bridge's own ceiling makes the whole
+	// bridge unresponsive rather than producing a useful answer.
+	ExchangeTimeout time.Duration
+
+	// Headers are additional request headers, for a bridge that authenticates
+	// with something other than HTTP Basic. Hop-by-hop and body-framing headers
+	// are rejected so a header cannot rewrite the request shape.
+	Headers map[string]string
 
 	baseURL   string
 	plaintext bool
@@ -60,7 +95,22 @@ func (target Target) Plaintext() bool { return target.plaintext }
 // NewTarget validates one bridge definition. Validation is strict and
 // fail-closed: an unusable target must be rejected at assembly time rather than
 // producing a confusing transport failure during the first probe.
+// TargetOptions carries the tunable parts of one bridge definition. Every field
+// is optional and falls back to a documented default.
+type TargetOptions struct {
+	RequestTimeout  time.Duration
+	CommandTimeout  time.Duration
+	ExchangeTimeout time.Duration
+	Headers         map[string]string
+}
+
 func NewTarget(key, baseURL, username, password string, requestTimeout time.Duration) (Target, error) {
+	return NewTargetWithOptions(key, baseURL, username, password, TargetOptions{RequestTimeout: requestTimeout})
+}
+
+// NewTargetWithOptions validates one bridge definition including its optional
+// timeouts and headers.
+func NewTargetWithOptions(key, baseURL, username, password string, options TargetOptions) (Target, error) {
 	if !ValidKey(key) {
 		return Target{}, fmt.Errorf("remote AT bridge key %q is invalid", key)
 	}
@@ -80,18 +130,69 @@ func NewTarget(key, baseURL, username, password string, requestTimeout time.Dura
 	if (username == "") != (password == "") {
 		return Target{}, fmt.Errorf("remote AT bridge %q must set both or neither of username and password", key)
 	}
-	timeout := requestTimeout
+	timeout := options.RequestTimeout
 	if timeout == 0 {
 		timeout = defaultRequestTimeout
 	}
 	if timeout < minimumRequestTimeout || timeout > maximumRequestTimeout {
 		return Target{}, fmt.Errorf("remote AT bridge %q request timeout must be from 1s through 2m", key)
 	}
+	commandTimeout, err := boundedTimeout(key, "command timeout", options.CommandTimeout, defaultCommandTimeout)
+	if err != nil {
+		return Target{}, err
+	}
+	exchangeTimeout, err := boundedTimeout(key, "exchange timeout", options.ExchangeTimeout, defaultExchangeTimeout)
+	if err != nil {
+		return Target{}, err
+	}
+	headers, err := validatedHeaders(key, options.Headers)
+	if err != nil {
+		return Target{}, err
+	}
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
 	return Target{
 		Key: key, Username: username, Password: password, RequestTimeout: timeout,
+		CommandTimeout: commandTimeout, ExchangeTimeout: exchangeTimeout, Headers: headers,
 		baseURL: parsed.Scheme + "://" + parsed.Host + parsed.Path, plaintext: parsed.Scheme == "http",
 	}, nil
+}
+
+func boundedTimeout(key, label string, value, fallback time.Duration) (time.Duration, error) {
+	if value == 0 {
+		return fallback, nil
+	}
+	if value < minimumBoundedTimeout || value > maximumBoundedTimeout {
+		return 0, fmt.Errorf("remote AT bridge %q %s must be from 1s through 3m", key, label)
+	}
+	return value, nil
+}
+
+// validatedHeaders copies and checks caller-supplied headers. It rejects names
+// that frame the request or are hop-by-hop, and values containing control
+// characters, so a header can only add authentication material.
+func validatedHeaders(key string, headers map[string]string) (map[string]string, error) {
+	if len(headers) == 0 {
+		return nil, nil
+	}
+	if len(headers) > maximumHeaderCount {
+		return nil, fmt.Errorf("remote AT bridge %q defines too many headers", key)
+	}
+	copied := make(map[string]string, len(headers))
+	for name, value := range headers {
+		if !headerNamePattern.MatchString(name) || len(name) > maximumHeaderNameLength {
+			return nil, fmt.Errorf("remote AT bridge %q has an invalid header name", key)
+		}
+		if reservedHeaders[strings.ToLower(name)] {
+			return nil, fmt.Errorf("remote AT bridge %q must not override the %q header", key, name)
+		}
+		if value == "" || len(value) > maximumHeaderValueSize || strings.ContainsFunc(value, func(character rune) bool {
+			return character < 0x20 || character == 0x7f
+		}) {
+			return nil, fmt.Errorf("remote AT bridge %q has an invalid header value", key)
+		}
+		copied[name] = value
+	}
+	return copied, nil
 }
 
 // Opener resolves bridge control-endpoint locators to exclusive bridge

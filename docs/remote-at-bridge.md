@@ -127,7 +127,21 @@ Agent 通过 `-remote-at-config` 或 `SIMPLUS_AGENT_REMOTE_AT_CONFIG` 读取一�
 | `profile` | 必须能在 adapter registry 中解析；拥有专用 driver transport 的型号（例如 QDC507 SMS）会被拒绝 |
 | `username` / `password` | 同时给出或同时省略；用户名不含冒号 |
 | `requestTimeoutMs` | 1000..120000，默认 20000 |
+| `commandTimeoutMs` | 1000..180000，默认 20000。**普通命令的上限，Agent 会把调用方的超时钳到这个值** |
+| `exchangeTimeoutMs` | 1000..180000，默认 30000。提示符类命令的上限，同上 |
+| `headers` | 最多 8 条自定义请求头，供使用非 HTTP Basic 认证的桥。拒绝改写请求形态的头（`Content-Type`/`Content-Length`/`Host`/`Accept`）与 hop-by-hop 头，值不得含控制字符 |
 | `attestCapabilities` | 见下节。默认 `false` |
+
+### 为什么超时上限必须可配且默认很小
+
+调用方的短信派发预算是按**本机直连模组**选的（Simplus 是 120s）。MCU 级别的桥根本没法按那个时长占用自己：参考固件的两个 handler 运行在 async_tcp 单任务上，等待期间**整个 HTTP 服务器停摆**。实测按 120s 阻塞时，该请求本身超时，且紧随其后的请求全部失败——一次回环测试 5 次里 4 次因此失败。
+
+所以两侧都要有上限，而且是两个独立的闸：
+
+- **Agent 侧**（`commandTimeoutMs` / `exchangeTimeoutMs`）：钳住「要求桥等多久」。这是给运维调的旋钮
+- **桥固件侧**：无论调用方要多久，桥只占用自己能承受的时长，超出即 `504`。参考固件是普通命令 20s、提示符命令 30s（后者与其原生短信路径一致）
+
+`504` 的语义是「已发出但结果未知」，对端不得重试。所以小上限是安全的：它把不确定性显式化，而不是把设备拖死。代价是慢网络下的提交会被报为 unconfirmed——**实测确认过若干这类「结果未知」的提交其实已经投递成功**。要减少这种情况就得同时抬高两侧的上限，并接受设备在此期间不响应。
 
 文件必须是常规文件、非符号链接、模式不含 group/other 位（例如 `0600`），大小不超过 64 KiB。任一条不满足即启动失败。缺少该配置时 Agent 行为与不带此功能完全一致。
 

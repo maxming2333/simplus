@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,9 @@ type fakeBridge struct {
 	requireAuth    [2]string
 	closedSessions []string
 	commands       []commandRequest
+	exchanges      []exchangeRequest
+	recordHeaders  []string
+	headers        []map[string]string
 	openCount      int
 	authFailures   int
 }
@@ -71,11 +75,34 @@ func (bridge *fakeBridge) handler() http.Handler {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	})
+	mux.HandleFunc(exchangePath, func(writer http.ResponseWriter, request *http.Request) {
+		if !bridge.authorized(request) {
+			writer.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		bridge.captureHeaders(request)
+		var decoded exchangeRequest
+		if err := json.NewDecoder(io.LimitReader(request.Body, 8192)).Decode(&decoded); err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		bridge.mu.Lock()
+		bridge.exchanges = append(bridge.exchanges, decoded)
+		token := bridge.token
+		bridge.mu.Unlock()
+		if decoded.Session != token {
+			writer.WriteHeader(http.StatusGone)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"lines":["+CMGS: 7","OK"]}`)
+	})
 	mux.HandleFunc(commandPath, func(writer http.ResponseWriter, request *http.Request) {
 		if !bridge.authorized(request) {
 			writer.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		bridge.captureHeaders(request)
 		var decoded commandRequest
 		if err := json.NewDecoder(io.LimitReader(request.Body, 8192)).Decode(&decoded); err != nil {
 			writer.WriteHeader(http.StatusBadRequest)
@@ -105,6 +132,21 @@ func (bridge *fakeBridge) handler() http.Handler {
 	return mux
 }
 
+func (bridge *fakeBridge) captureHeaders(request *http.Request) {
+	bridge.mu.Lock()
+	defer bridge.mu.Unlock()
+	if len(bridge.recordHeaders) == 0 {
+		return
+	}
+	seen := make(map[string]string, len(bridge.recordHeaders))
+	for _, name := range bridge.recordHeaders {
+		if value := request.Header.Get(name); value != "" {
+			seen[name] = value
+		}
+	}
+	bridge.headers = append(bridge.headers, seen)
+}
+
 func (bridge *fakeBridge) authorized(request *http.Request) bool {
 	bridge.mu.Lock()
 	expected := bridge.requireAuth
@@ -128,6 +170,8 @@ func (bridge *fakeBridge) snapshot() fakeBridge {
 	return fakeBridge{
 		closedSessions: append([]string(nil), bridge.closedSessions...),
 		commands:       append([]commandRequest(nil), bridge.commands...),
+		exchanges:      append([]exchangeRequest(nil), bridge.exchanges...),
+		headers:        append([]map[string]string(nil), bridge.headers...),
 		openCount:      bridge.openCount,
 		authFailures:   bridge.authFailures,
 	}
@@ -329,10 +373,12 @@ func TestQueryClampsTimeoutSentToBridge(t *testing.T) {
 	if len(commands) != 3 {
 		t.Fatalf("commands = %d", len(commands))
 	}
+	// The ceiling is the target's own command timeout, not the protocol maximum:
+	// a bridge must never be asked to occupy itself longer than it can afford.
 	expected := []int64{
 		minimumQueryTimeout.Milliseconds(),
 		minimumQueryTimeout.Milliseconds(),
-		maximumQueryTimeout.Milliseconds(),
+		defaultCommandTimeout.Milliseconds(),
 	}
 	for index, command := range commands {
 		if command.TimeoutMS != expected[index] {
@@ -502,5 +548,84 @@ func TestNilOpenerFailsClosed(t *testing.T) {
 	kind, _, ok := attransport.OpenFailure(err)
 	if !ok || kind != attransport.OpenUnsupported {
 		t.Fatalf("nil opener failure = %q", kind)
+	}
+}
+
+func TestConfiguredHeadersAndCeilingsReachTheBridge(t *testing.T) {
+	bridge := newFakeBridge()
+	bridge.recordHeaders = []string{"X-Bridge-Token", "Authorization"}
+	server := httptest.NewServer(bridge.handler())
+	t.Cleanup(server.Close)
+	target, err := NewTargetWithOptions("esp32-a", server.URL, "", "", TargetOptions{
+		RequestTimeout:  2 * time.Second,
+		CommandTimeout:  3 * time.Second,
+		ExchangeTimeout: 4 * time.Second,
+		Headers:         map[string]string{"X-Bridge-Token": "opaque-token"},
+	})
+	if err != nil {
+		t.Fatalf("NewTargetWithOptions: %v", err)
+	}
+	opener, err := NewOpener([]Target{target})
+	if err != nil {
+		t.Fatalf("NewOpener: %v", err)
+	}
+	session, err := opener.Open(Locator("esp32-a"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer session.Close()
+	if _, err := session.Query(context.Background(), "AT", time.Hour); err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if _, err := attransport.PromptExchange(context.Background(), session, "AT+CMGS=1", []byte("41\x1a"), time.Hour); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	observed := bridge.snapshot()
+	if len(observed.commands) != 1 || observed.commands[0].TimeoutMS != 3000 {
+		t.Fatalf("command timeout was not clamped to the target ceiling: %+v", observed.commands)
+	}
+	if len(observed.exchanges) != 1 || observed.exchanges[0].TimeoutMS != 4000 {
+		t.Fatalf("exchange timeout was not clamped to the target ceiling: %+v", observed.exchanges)
+	}
+	for _, seen := range observed.headers {
+		if seen["X-Bridge-Token"] != "opaque-token" {
+			t.Fatalf("configured header did not reach the bridge: %#v", seen)
+		}
+	}
+	if len(observed.headers) == 0 {
+		t.Fatal("no request headers were recorded")
+	}
+}
+
+func TestTargetRejectsUnsafeHeadersAndCeilings(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		options TargetOptions
+	}{
+		{name: "reserved content-type", options: TargetOptions{Headers: map[string]string{"Content-Type": "text/plain"}}},
+		{name: "reserved host", options: TargetOptions{Headers: map[string]string{"host": "elsewhere"}}},
+		{name: "reserved content-length", options: TargetOptions{Headers: map[string]string{"Content-Length": "0"}}},
+		{name: "hop-by-hop connection", options: TargetOptions{Headers: map[string]string{"Connection": "close"}}},
+		{name: "invalid header name", options: TargetOptions{Headers: map[string]string{"Bad Name": "x"}}},
+		{name: "empty header value", options: TargetOptions{Headers: map[string]string{"X-Token": ""}}},
+		{name: "control character in value", options: TargetOptions{Headers: map[string]string{"X-Token": "a\nb"}}},
+		{name: "oversize header value", options: TargetOptions{Headers: map[string]string{"X-Token": strings.Repeat("x", maximumHeaderValueSize+1)}}},
+		{name: "command timeout below bound", options: TargetOptions{CommandTimeout: time.Millisecond}},
+		{name: "command timeout above bound", options: TargetOptions{CommandTimeout: time.Hour}},
+		{name: "exchange timeout below bound", options: TargetOptions{ExchangeTimeout: time.Millisecond}},
+		{name: "exchange timeout above bound", options: TargetOptions{ExchangeTimeout: time.Hour}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := NewTargetWithOptions("a", "http://192.0.2.10", "", "", testCase.options); err == nil {
+				t.Fatal("NewTargetWithOptions accepted an unsafe option")
+			}
+		})
+	}
+	many := map[string]string{}
+	for index := 0; index <= maximumHeaderCount; index++ {
+		many[fmt.Sprintf("X-H%d", index)] = "v"
+	}
+	if _, err := NewTargetWithOptions("a", "http://192.0.2.10", "", "", TargetOptions{Headers: many}); err == nil {
+		t.Fatal("NewTargetWithOptions accepted too many headers")
 	}
 }

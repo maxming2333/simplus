@@ -52,7 +52,7 @@ func (current *session) Exchange(ctx context.Context, command string, payload []
 	if len(payload) == 0 || len(payload) > maximumPromptPayload {
 		return nil, errors.Join(attransport.ErrPromptNotReached, ErrCommandInvalid)
 	}
-	bounded := boundedQueryTimeout(timeout)
+	bounded := boundedQueryTimeout(timeout, current.target.ExchangeTimeout)
 	encoded := make([]byte, hex.EncodedLen(len(payload)))
 	hex.Encode(encoded, payload)
 	defer zero(encoded)
