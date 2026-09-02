@@ -27,6 +27,11 @@ const (
 	maximumScannedText  = 512
 )
 
+// EncodingForDataCodingScheme reports which alphabet a TP-DCS selects. It is
+// exported so a caller that must describe an undecodable message can name the
+// coding scheme without re-implementing 3GPP TS 23.038.
+func EncodingForDataCodingScheme(dcs byte) (Encoding, error) { return encodingForDCS(dcs) }
+
 // BinaryUserData is what can honestly be said about an 8-bit message without
 // implementing a WAP stack: which application port it addressed, and whichever
 // human-readable fragments its payload contains.
