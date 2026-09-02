@@ -30,6 +30,17 @@ type Segment struct {
 	Total     int
 	UnitCount int
 	UserData  []byte
+
+	// DestinationPort is the WDP application port this segment addressed, or
+	// zero when it carried no port addressing. It is meaningful only for
+	// EncodingData8Bit and is never part of message text.
+	DestinationPort uint16
+
+	// headerBytes records how many leading UserData octets are the user-data
+	// header. A single-part message may still carry one, so its length cannot be
+	// inferred from the concatenation envelope alone; without it those octets
+	// would be decoded as message text.
+	headerBytes int
 }
 
 var (
@@ -99,6 +110,18 @@ func DecodeSegment(segment Segment) (string, error) {
 		return decodeGSM7Segment(segment)
 	case EncodingUCS2:
 		return decodeUCS2Segment(segment)
+	case EncodingData8Bit:
+		payload, _, err := segmentPayload(segment)
+		if err != nil {
+			return "", err
+		}
+		scoped := segment
+		scoped.UserData = payload
+		data, err := DecodeBinaryUserData(scoped)
+		if err != nil {
+			return "", err
+		}
+		return DescribeBinaryUserData(data), nil
 	default:
 		return "", fmt.Errorf("unsupported SMS encoding %q", segment.Encoding)
 	}
@@ -366,7 +389,17 @@ func segmentPayload(segment Segment) ([]byte, int, error) {
 		if segment.Part != 1 || segment.Reference != 0 {
 			return nil, 0, errors.New("single-part SMS has an invalid concatenation envelope")
 		}
-		return segment.UserData, 0, nil
+		if segment.headerBytes <= 0 {
+			return segment.UserData, 0, nil
+		}
+		if segment.headerBytes > len(segment.UserData) {
+			return nil, 0, errors.New("single-part SMS user-data header exceeds its user data")
+		}
+		padding := 0
+		if segment.Encoding == EncodingGSM7 {
+			padding = ((segment.headerBytes*8+6)/7)*7 - segment.headerBytes*8
+		}
+		return segment.UserData[segment.headerBytes:], padding, nil
 	}
 	if len(segment.UserData) < 6 {
 		return nil, 0, errors.New("concatenated SMS is missing its UDH")

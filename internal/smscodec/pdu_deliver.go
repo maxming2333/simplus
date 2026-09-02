@@ -118,6 +118,10 @@ func encodingForDCS(dcs byte) (Encoding, error) {
 		switch (dcs >> 2) & 0x03 {
 		case 0:
 			return EncodingGSM7, nil
+		case 1:
+			// 8-bit application data: WAP push, MMS notification, OTA
+			// provisioning. Common on consumer SIMs, so it must not be rejected.
+			return EncodingData8Bit, nil
 		case 2:
 			return EncodingUCS2, nil
 		}
@@ -125,8 +129,11 @@ func encodingForDCS(dcs byte) (Encoding, error) {
 		return EncodingGSM7, nil
 	case dcs&0xf0 == 0xe0:
 		return EncodingUCS2, nil
-	case dcs&0xf0 == 0xf0 && dcs&0x04 == 0:
-		return EncodingGSM7, nil
+	case dcs&0xf0 == 0xf0:
+		if dcs&0x04 == 0 {
+			return EncodingGSM7, nil
+		}
+		return EncodingData8Bit, nil
 	}
 	return "", fmt.Errorf("unsupported SMS data coding scheme 0x%02x", dcs)
 }
@@ -179,14 +186,22 @@ func decodeDeliverUserData(encoding Encoding, hasHeader bool, userDataLength int
 	segment := Segment{Encoding: encoding, Part: 1, Total: 1}
 	headerBytes := 0
 	if hasHeader {
-		header, err := parseConcatenationHeader(data)
+		// Tolerant parsing: an inbound header is written by the network and may
+		// legitimately carry only port addressing, or nothing at all. See
+		// parseUserDataHeader for why treating that as a failure is harmful.
+		header, err := parseUserDataHeader(data)
 		if err != nil {
 			return Segment{}, fmt.Errorf("SMS-DELIVER PDU uses an unsupported user-data header: %w", err)
 		}
 		headerBytes = header.bytes
-		segment.Reference = header.reference
-		segment.Total = header.total
-		segment.Part = header.part
+		if header.hasConcatenation {
+			segment.Reference = header.reference
+			segment.Total = header.total
+			segment.Part = header.part
+		}
+		if header.hasPorts {
+			segment.DestinationPort = header.destinationPort
+		}
 	}
 
 	switch encoding {
@@ -206,23 +221,48 @@ func decodeDeliverUserData(encoding Encoding, hasHeader bool, userDataLength int
 			return Segment{}, errors.New("SMS-DELIVER GSM7 user data length is inconsistent")
 		}
 	case EncodingUCS2:
-		if len(data) != userDataLength || (userDataLength-headerBytes)%2 != 0 {
+		if len(data) != userDataLength {
 			return Segment{}, errors.New("SMS-DELIVER UCS-2 user data length is inconsistent")
+		}
+		// A UCS-2 body must start on an even offset. When the header leaves it
+		// odd, one alignment octet follows the header; some operators emit a
+		// zero-length header purely to create that padding. Skipping it here is
+		// what keeps such messages decodable instead of poisoning the inbox.
+		if (userDataLength-headerBytes)%2 != 0 {
+			headerBytes++
+			if headerBytes > userDataLength {
+				return Segment{}, errors.New("SMS-DELIVER UCS-2 user data is misaligned")
+			}
 		}
 		segment.UnitCount = (userDataLength - headerBytes) / 2
 		if segment.UnitCount < 1 {
 			return Segment{}, errors.New("SMS-DELIVER UCS-2 user data is empty")
 		}
+	case EncodingData8Bit:
+		if len(data) != userDataLength {
+			return Segment{}, errors.New("SMS-DELIVER 8-bit user data length is inconsistent")
+		}
+		segment.UnitCount = userDataLength - headerBytes
+		if segment.UnitCount < 1 {
+			return Segment{}, errors.New("SMS-DELIVER 8-bit user data is empty")
+		}
 	default:
 		return Segment{}, errors.New("SMS-DELIVER PDU has an unsupported encoding")
 	}
 	segment.UserData = append([]byte(nil), data...)
-	if encoding == EncodingGSM7 {
+	segment.headerBytes = headerBytes
+	// Validate the text alphabets eagerly so a malformed body is rejected at the
+	// PDU boundary. 8-bit data has no alphabet to validate: its payload is opaque
+	// application data and is described rather than decoded.
+	switch encoding {
+	case EncodingGSM7:
 		if _, err := decodeGSM7Segment(segment); err != nil {
 			return Segment{}, err
 		}
-	} else if _, err := decodeUCS2Segment(segment); err != nil {
-		return Segment{}, err
+	case EncodingUCS2:
+		if _, err := decodeUCS2Segment(segment); err != nil {
+			return Segment{}, err
+		}
 	}
 	return segment, nil
 }
