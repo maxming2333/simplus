@@ -83,6 +83,23 @@ DELETE {base}/at/session
 
 返回 `200` 或 `204`。Agent 侧的关闭是 best-effort：桥必须能在 `expiresInMs` 之后自行回收会话，否则一次丢包就会永久占住串口。
 
+## 短信消费归属：胖模式 / 瘦模式
+
+一条入站蜂窝短信只能有一个消费者。桥固件用一个开机模式表达这件事：
+
+| 模式 | 模组设置 | 行为 |
+| --- | --- | --- |
+| 胖模式（默认） | `AT+CNMI=2,2` | 新短信直投桥固件成为主动上报，**不进模组存储**，由桥固件自己解析并推送 |
+| 瘦模式 | `AT+CNMI=2,1` | 新短信落入模组/SIM 存储并只给一条入库指示，桥固件不消费，由 Simplus 轮询取走并删除 |
+
+**Simplus 要收蜂窝短信必须开瘦模式。** 胖模式下 `AT+CMGL` 永远返回空——不是因为没短信，而是因为短信根本没进存储。这是最容易误判为「Simplus 坏了」的情形。
+
+两种模式互斥，不能都要：同时消费会产生「有时进桥固件推送、有时进 Simplus」这种最难排查的状态。
+
+瘦模式下如果 Simplus 没在取，短信会堆积在存储里（容量通常 30 条），满了之后新短信会被网络重投或丢弃。这是 store-and-poll 的固有代价，Simplus 在 ack 之后才删除。
+
+参考固件把这个开关放在管理页面，保存后重启生效。
+
 ## 配置文件
 
 Agent 通过 `-remote-at-config` 或 `SIMPLUS_AGENT_REMOTE_AT_CONFIG` 读取一个私有 JSON 文件。凭据不走命令行参数，因为本机任何进程都能通过 `/proc` 看到命令行。
@@ -137,6 +154,22 @@ Agent 通过 `-remote-at-config` 或 `SIMPLUS_AGENT_REMOTE_AT_CONFIG` 读取一�
 已在真机验证（读)：一枚 ML307A-DSLN-MTSH1S00 经桥完成完整只读综合探测——`state=complete`、型号/IMEI 指纹、SIM present+ready、SIM 身份指纹与归属 MCC-MNC、CSQ 信号与三域注册状态；以及 `AT+CCHO` → `AT+CGLA` → `AT+CCHC` 的完整粘性逻辑通道序列，关闭后通道号可被重新分配。会话独占、陈旧 token 拒绝、命令越界拒绝、TTL 自动回收均按契约表现。仍未验证的部分见 [`compatibility.md`](compatibility.md)。
 
 可重放这份证据的入口是 `internal/hardwareprobe` 里的 opt-in 探测测试，通过 `SIMPLUS_REMOTE_AT_HIL_CONFIG` 指向私有桥配置启用。它只执行只读计划，不做任何写入、射频变更或 SIM 变更。
+
+## 一次操作 = 一个会话
+
+Simplus 侧每个短信操作（列举 / 读取 / 删除 / 提交）只开**一个**桥会话：
+
+```
+POST /at/session
+POST /at/command   AT+CMGF=0
+POST /at/command   AT+CPMS="SM","SM","SM"
+POST /at/command   AT+CMGL=4          ← 或 CMGR / CMGD，多段提交则是多次 /at/exchange
+DELETE /at/session
+```
+
+模式与存储选择每次操作都重新下发（它们是模组粘性状态，但模组复位会静默丢掉，而桥接路径看不到 USB 重新枚举，因此不能缓存）。把它们和操作本身放进同一个会话有两个作用：往返从 9 次降到 5 次，更重要的是**独占窗口是「每操作」而不是「每命令」**——否则别的消费者能插在 `AT+CMGF=0` 与 `AT+CMGL=4` 之间，多段短信也可能被别人的命令切开。
+
+桥固件因此需要能承受一个会话内连续多条命令，并且在会话未关闭前拒绝其他调用方（这已经是 `409` 的语义）。
 
 ## 部署
 

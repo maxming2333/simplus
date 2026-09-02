@@ -38,8 +38,12 @@
 | 提示符类命令（命令 → `>` → 载荷 → 终止状态）经桥的原子交换，含「载荷未发出」与「结果不确定」的状态分类 | HIL-0 |
 | ML307A 蜂窝短信入站链路（PDU 模式、存储选择、存储列举）经桥由生产 SMS driver 驱动 | HIL-0 |
 | ML307A 蜂窝短信出站提交（`AT+CMGS`） | 尚未验证（需已驻网的 SIM） |
+| 一次操作复用一个桥会话（列举/读取/删除/多段提交），独占窗口为操作级 | Fixture + HIL-0 |
+| 桥固件胖/瘦模式切换真实改变模组上报设置 | HIL-0 |
 
 HIL-0 证据取自一枚 ML307A-DSLN-MTSH1S00 与一台参考 ESP32 桥固件，可通过 `SIMPLUS_REMOTE_AT_HIL_CONFIG` 重放（只读，不含写入/射频/SIM 变更）。
+
+入站短信的消费归属由桥固件的胖/瘦模式决定，二者互斥。胖模式（默认）下新短信直投桥固件、不进模组存储，因此 Simplus 的存储列举永远为空；只有瘦模式才把短信留在存储里交给 Simplus。误判这一点会表现为「Simplus 收不到短信」但两侧日志都正常，细节见 [`remote-at-bridge.md`](remote-at-bridge.md)。
 
 ML307A 蜂窝短信：通用 3GPP TS 27.005 PDU 模式 driver、durable recovery store 与提交/确认状态机由 `internal/modemadapter/standardsms` 与首个通过蜂窝短信 HIL 的型号共用，共用代码不等于共用证据——ML307A 自身的 `sms-control` 保持 `unverified`，因此 `internal/application/inventory` 不会为该型号声明短信能力。要提升为 `observed`，需要一张已驻网的 SIM 完成真实收发 HIL 并记录在本文。
 

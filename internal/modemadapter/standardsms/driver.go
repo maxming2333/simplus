@@ -141,12 +141,44 @@ func (driver *Driver) Profile() string {
 	return driver.model.Profile()
 }
 
+// begin resolves the control endpoint and, when the transport supports it, holds
+// one exclusive conversation for the whole operation.
+//
+// Without this every command would open and close its own conversation, so the
+// mandatory mode/storage selection and the operation itself could be interleaved
+// by another consumer, and a request/response transport would pay the setup cost
+// three times per operation. A transport that cannot scope simply runs per
+// command, exactly as before.
+func (driver *Driver) begin(ctx context.Context, device agentapi.DeviceReport) (Transport, string, func(), error) {
+	if driver == nil {
+		return nil, "", nil, ErrControlEndpoint
+	}
+	endpoint, err := controlEndpoint(driver.model, device)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	transport, release := driver.transport, func() {}
+	if scoped, ok := driver.transport.(ScopedTransport); ok {
+		bound, done, scopeErr := scoped.Begin(endpoint)
+		if scopeErr != nil {
+			return nil, "", nil, transportFailure(scopeErr)
+		}
+		transport, release = bound, done
+	}
+	if err := configureSMS(ctx, transport.Command, endpoint); err != nil {
+		release()
+		return nil, "", nil, err
+	}
+	return transport, endpoint, release, nil
+}
+
 func (driver *Driver) List(ctx context.Context, device agentapi.DeviceReport) ([]StoredPDU, error) {
-	endpoint, err := driver.prepare(ctx, device)
+	transport, endpoint, release, err := driver.begin(ctx, device)
 	if err != nil {
 		return nil, err
 	}
-	lines, err := driver.transport.Command(ctx, endpoint, "AT+CMGL=4", listTimeout)
+	defer release()
+	lines, err := transport.Command(ctx, endpoint, "AT+CMGL=4", listTimeout)
 	if err != nil {
 		return nil, transportFailure(err)
 	}
@@ -161,11 +193,12 @@ func (driver *Driver) Read(ctx context.Context, device agentapi.DeviceReport, in
 	if index < 0 || index > maxStorageIndex {
 		return StoredPDU{}, errors.New("3GPP SMS storage index is invalid")
 	}
-	endpoint, err := driver.prepare(ctx, device)
+	transport, endpoint, release, err := driver.begin(ctx, device)
 	if err != nil {
 		return StoredPDU{}, err
 	}
-	lines, err := driver.transport.Command(ctx, endpoint, "AT+CMGR="+strconv.Itoa(index), readTimeout)
+	defer release()
+	lines, err := transport.Command(ctx, endpoint, "AT+CMGR="+strconv.Itoa(index), readTimeout)
 	if err != nil {
 		return StoredPDU{}, transportFailure(err)
 	}
@@ -180,11 +213,12 @@ func (driver *Driver) Delete(ctx context.Context, device agentapi.DeviceReport, 
 	if index < 0 || index > maxStorageIndex {
 		return errors.New("3GPP SMS storage index is invalid")
 	}
-	endpoint, err := driver.prepare(ctx, device)
+	transport, endpoint, release, err := driver.begin(ctx, device)
 	if err != nil {
 		return err
 	}
-	lines, err := driver.transport.Command(ctx, endpoint, "AT+CMGD="+strconv.Itoa(index)+",0", deleteTimeout)
+	defer release()
+	lines, err := transport.Command(ctx, endpoint, "AT+CMGD="+strconv.Itoa(index)+",0", deleteTimeout)
 	if err != nil {
 		return transportFailure(err)
 	}
@@ -202,19 +236,22 @@ func (driver *Driver) Send(ctx context.Context, device agentapi.DeviceReport, de
 	if driver == nil {
 		return SendResult{}, ErrControlEndpoint
 	}
-	return dispatchPDU(ctx, driver.model, driver.transport, device, destination, text)
+	// Scope the whole submission: a multipart message must not have another
+	// consumer interleaved between its parts.
+	transport, endpoint, release, err := driver.begin(ctx, device)
+	if err != nil {
+		return SendResult{}, &SendFailure{Cause: err}
+	}
+	defer release()
+	return dispatchSMS(ctx, endpoint, transport.Prompt, destination, text)
 }
 
-func dispatchPDU(ctx context.Context, model modemadapter.Adapter, transport Transport, device agentapi.DeviceReport, destination, text string) (SendResult, error) {
-	return dispatchSMS(ctx, model, transport.Command, transport.Prompt, device, destination, text)
-}
-
+// dispatchSMS submits an already-encoded message on an endpoint whose PDU mode
+// and storage selection have already been asserted by the caller.
 func dispatchSMS(
 	ctx context.Context,
-	model modemadapter.Adapter,
-	command func(context.Context, string, string, time.Duration) ([]string, error),
+	endpoint string,
 	prompt func(context.Context, string, string, []byte, time.Duration) ([]string, error),
-	device agentapi.DeviceReport,
 	destination, text string,
 ) (SendResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
@@ -223,9 +260,8 @@ func dispatchSMS(
 	if err != nil {
 		return SendResult{}, err
 	}
-	endpoint, err := prepareSMSCommands(ctx, model, command, device)
-	if err != nil {
-		return SendResult{}, &SendFailure{TotalParts: len(segments), Cause: err}
+	if endpoint == "" || prompt == nil {
+		return SendResult{}, &SendFailure{TotalParts: len(segments), Cause: ErrControlEndpoint}
 	}
 	result := SendResult{Parts: make([]PartSubmission, 0, len(segments))}
 	for index, segment := range segments {
@@ -262,51 +298,47 @@ func dispatchSMS(
 	return result, nil
 }
 
-func (driver *Driver) prepare(ctx context.Context, device agentapi.DeviceReport) (string, error) {
-	if driver == nil {
-		return "", ErrControlEndpoint
-	}
-	return prepareSMS(ctx, driver.model, driver.transport, device)
-}
-
-func prepareSMS(ctx context.Context, model modemadapter.Adapter, transport Transport, device agentapi.DeviceReport) (string, error) {
-	if transport == nil {
-		return "", ErrControlEndpoint
-	}
-	return prepareSMSCommands(ctx, model, transport.Command, device)
-}
-
-func prepareSMSCommands(ctx context.Context, model modemadapter.Adapter, command func(context.Context, string, string, time.Duration) ([]string, error), device agentapi.DeviceReport) (string, error) {
-	if model == nil || command == nil || device.Profile != model.Profile() {
+// controlEndpoint resolves the model's primary control endpoint. It performs no
+// I/O, so callers can scope a conversation before issuing anything.
+func controlEndpoint(model modemadapter.Adapter, device agentapi.DeviceReport) (string, error) {
+	if model == nil || device.Profile != model.Profile() {
 		return "", ErrControlEndpoint
 	}
 	endpoint, ok := model.Endpoint(device, modemadapter.EndpointPrimaryAT)
-	if !ok {
+	if !ok || endpoint.Node == "" {
 		return "", ErrControlEndpoint
 	}
-	lines, err := command(ctx, endpoint.Node, "AT+CMGF=0", modeTimeout)
+	return endpoint.Node, nil
+}
+
+// configureSMS asserts PDU mode and storage selection. It is re-issued for every
+// operation on purpose: these are sticky modem states, but a modem reset would
+// silently drop them, and a bridged control path sees no re-enumeration that
+// would otherwise invalidate the device generation.
+func configureSMS(ctx context.Context, command func(context.Context, string, string, time.Duration) ([]string, error), endpointNode string) error {
+	if command == nil || endpointNode == "" {
+		return ErrControlEndpoint
+	}
+	lines, err := command(ctx, endpointNode, "AT+CMGF=0", modeTimeout)
 	if err != nil {
-		return "", transportFailure(err)
+		return transportFailure(err)
 	}
 	body, err := responseBody(lines, false)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if len(body) != 0 {
-		return "", invalidResponse(nil, false)
+		return invalidResponse(nil, false)
 	}
-	lines, err = command(ctx, endpoint.Node, `AT+CPMS="SM","SM","SM"`, modeTimeout)
+	lines, err = command(ctx, endpointNode, `AT+CPMS="SM","SM","SM"`, modeTimeout)
 	if err != nil {
-		return "", transportFailure(err)
+		return transportFailure(err)
 	}
 	body, err = responseBody(lines, false)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if err := validateCPMSSelection(body); err != nil {
-		return "", err
-	}
-	return endpoint.Node, nil
+	return validateCPMSSelection(body)
 }
 
 // The Quectel write form returns exactly six counters:
