@@ -22,7 +22,7 @@ import (
 	"github.com/leonfox28/simplus/internal/buildinfo"
 	"github.com/leonfox28/simplus/internal/hardwareprobe"
 	"github.com/leonfox28/simplus/internal/modemadapter"
-	"github.com/leonfox28/simplus/internal/modemadapter/qdc507sms"
+	"github.com/leonfox28/simplus/internal/modemadapter/standardsms"
 	"github.com/leonfox28/simplus/internal/security/secretbox"
 )
 
@@ -141,7 +141,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		logger.Error("SIM identity key initialization failed", "error", keyErr)
 		return 1
 	}
-	stateStore, stateErr := qdc507sms.OpenSQLiteStateRoot(ctx, *stateRoot)
+	stateStore, stateErr := standardsms.OpenSQLiteStateRoot(ctx, *stateRoot)
 	if stateErr != nil {
 		logger.Error("QDC507 SMS state initialization failed", "error", stateErr)
 		return 1
@@ -158,20 +158,40 @@ func run(args []string, stdout, stderr io.Writer) int {
 		stateStore = nil
 		return true
 	}
-	transport := qdc507sms.NewTTYTransport()
-	driver, driverErr := qdc507sms.NewDriver(transport)
-	if driverErr != nil {
+	// Resolve the control transport before composing adapters: a model whose SMS
+	// driver runs over the shared AT seam must use the same opener the prober
+	// uses, so both reach a bridged modem through one deterministic route.
+	transportPlan, planErr := planATTransport(*remoteATConfigPath)
+	if planErr != nil {
 		closeState()
-		logger.Error("QDC507 SMS driver initialization failed", "error", driverErr)
+		logger.Error("AT control transport initialization failed", "error", planErr)
 		return 1
 	}
-	qdcAdapter, adapterErr := qdc507sms.NewAdapter(driver, stateStore)
+
+	// QDC507 keeps its dedicated tty transport, which is what its accepted
+	// cellular SMS HIL was collected through.
+	qdcAdapter, adapterErr := composeSMSAdapter(modemadapter.QDC507SMS{}, standardsms.NewTTYTransport(), stateStore)
 	if adapterErr != nil {
 		closeState()
-		logger.Error("QDC507 SMS adapter initialization failed", "error", adapterErr)
+		logger.Error("QDC507 SMS composition failed", "error", adapterErr)
 		return 1
 	}
-	registry, registryErr := modemadapter.NewRegistry(qdcAdapter, modemadapter.ML307A{})
+	// ML307A composes the same standard 3GPP driver over the shared AT seam, so
+	// it works on a locally attached modem and on a bridged one without the
+	// driver learning the difference.
+	ml307aTransport, transportErr := standardsms.NewOpenerTransport(transportPlan.opener)
+	if transportErr != nil {
+		closeState()
+		logger.Error("ML307A SMS transport initialization failed", "error", transportErr)
+		return 1
+	}
+	ml307aAdapter, adapterErr := composeSMSAdapter(modemadapter.ML307ASMS{}, ml307aTransport, stateStore)
+	if adapterErr != nil {
+		closeState()
+		logger.Error("ML307A SMS composition failed", "error", adapterErr)
+		return 1
+	}
+	registry, registryErr := modemadapter.NewRegistry(qdcAdapter, ml307aAdapter)
 	if registryErr != nil {
 		closeState()
 		logger.Error("hardware adapter registry initialization failed", "error", registryErr)
@@ -182,13 +202,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	scanner.DevRoot = *devRoot
 	scanner.Adapters = registry
 	scanner.Identities = identityKeyring
-	scanner.Querier = hardwareprobe.NewATQuerierWithIdentity(identityKeyring)
-	if *remoteATConfigPath != "" {
-		if err := attachRemoteATBridges(scanner, registry, identityKeyring, *remoteATConfigPath, logger); err != nil {
-			closeState()
-			logger.Error("remote AT bridge initialization failed", "error", err)
-			return 1
-		}
+	scanner.Querier = hardwareprobe.NewATQuerierWithOpener(transportPlan.opener, identityKeyring)
+	if err := transportPlan.attachBridgeDevices(scanner, registry, logger); err != nil {
+		closeState()
+		logger.Error("remote AT bridge initialization failed", "error", err)
+		return 1
 	}
 	monitor := agentapi.NewMonitor(scanner)
 	scanner.CurrentSnapshot = monitor.Snapshot
@@ -297,6 +315,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		exitCode = 1
 	}
 	return exitCode
+}
+
+// composeSMSAdapter binds one model to the shared 3GPP PDU-mode SMS driver and
+// the durable recovery store. The store is keyed by SIM identity rather than by
+// model, so both models share one instance: a SIM moved between modems keeps its
+// inbound and operation state.
+func composeSMSAdapter(model modemadapter.Adapter, transport standardsms.Transport, store standardsms.StateStore) (modemadapter.Adapter, error) {
+	driver, err := standardsms.NewDriver(model, transport)
+	if err != nil {
+		return nil, err
+	}
+	return standardsms.NewAdapter(model, driver, store)
 }
 
 func runRegisterOptionDriver(stdout, stderr io.Writer, effectiveUID int, registry *modemadapter.Registry, writer optionIDWriter) int {

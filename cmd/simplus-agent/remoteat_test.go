@@ -31,21 +31,45 @@ func writeBridgeConfig(t *testing.T, body string) string {
 	return path
 }
 
-func TestAttachRemoteATBridgesPublishesConfiguredBridges(t *testing.T) {
-	registry := modemadapter.DefaultRegistry()
+// TestPlanATTransportWithoutConfigurationKeepsTheLocalPath is the regression
+// guard for the disabled-by-default requirement.
+func TestPlanATTransportWithoutConfigurationKeepsTheLocalPath(t *testing.T) {
+	plan, err := planATTransport("")
+	if err != nil {
+		t.Fatalf("planATTransport: %v", err)
+	}
+	if plan.opener == nil {
+		t.Fatal("plan has no AT transport")
+	}
+	if len(plan.bridges.Bridges) != 0 {
+		t.Fatalf("plan published bridges without configuration: %+v", plan.bridges)
+	}
 	scanner := hardwareprobe.NewScanner()
-	scanner.Adapters = registry
-	baseline := scanner.Querier
+	if err := plan.attachBridgeDevices(scanner, modemadapter.DefaultRegistry(), discardLogger()); err != nil {
+		t.Fatalf("attachBridgeDevices: %v", err)
+	}
+	if scanner.ExtraDevices != nil {
+		t.Fatal("an unconfigured plan registered a contributed device source")
+	}
+}
 
+func TestConfiguredBridgePublishesADeviceForItsModel(t *testing.T) {
 	path := writeBridgeConfig(t, `{"bridges":[{"key":"esp32-a","baseUrl":"http://bridge.invalid","profile":"ml307a","username":"agent","password":"secret"}]}`)
-	if err := attachRemoteATBridges(scanner, registry, nil, path, discardLogger()); err != nil {
-		t.Fatalf("attachRemoteATBridges: %v", err)
+	plan, err := planATTransport(path)
+	if err != nil {
+		t.Fatalf("planATTransport: %v", err)
+	}
+	if plan.opener == nil || len(plan.bridges.Bridges) != 1 {
+		t.Fatalf("plan = %+v", plan.bridges)
+	}
+	scanner := hardwareprobe.NewScanner()
+	registry := modemadapter.DefaultRegistry()
+	scanner.Adapters = registry
+	if err := plan.attachBridgeDevices(scanner, registry, discardLogger()); err != nil {
+		t.Fatalf("attachBridgeDevices: %v", err)
 	}
 	if scanner.ExtraDevices == nil {
-		t.Fatal("bridge assembly did not register the contributed device source")
-	}
-	if scanner.Querier == nil || scanner.Querier == baseline {
-		t.Fatal("bridge assembly did not replace the AT querier with the routing transport")
+		t.Fatal("configured bridge did not register a contributed device source")
 	}
 	devices, err := scanner.ExtraDevices(context.Background())
 	if err != nil {
@@ -65,37 +89,66 @@ func TestAttachRemoteATBridgesPublishesConfiguredBridges(t *testing.T) {
 	}
 }
 
-func TestAttachRemoteATBridgesFailsClosed(t *testing.T) {
-	registry := modemadapter.DefaultRegistry()
+// TestBridgedModelMustNotRequireALocalControlEndpoint proves the production
+// registry composition stays publishable on a bridged path for the model that
+// runs over the shared AT seam, and refuses the one that owns a tty-only driver.
+func TestBridgedModelMustNotRequireALocalControlEndpoint(t *testing.T) {
+	if (modemadapter.ML307ASMS{}).Profile() != agentapi.ProfileML307A {
+		t.Fatal("ML307A SMS composition changed its profile")
+	}
+	if _, ok := any(modemadapter.ML307ASMS{}).(modemadapter.LocalTTYAdapter); ok {
+		t.Fatal("ML307A SMS composition must not require a local control endpoint")
+	}
+	local, ok := any(modemadapter.QDC507SMS{}).(modemadapter.LocalTTYAdapter)
+	if !ok || !local.RequiresLocalTTY() {
+		t.Fatal("QDC507 SMS composition must declare that it requires a local control endpoint")
+	}
+}
+
+func TestPlanATTransportFailsClosed(t *testing.T) {
 	for _, testCase := range []struct{ name, body string }{
-		{name: "unknown profile", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"unknown"}]}`},
-		{name: "duplicate key", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"ml307a"},{"key":"a","baseUrl":"http://other.invalid","profile":"ml307a"}]}`},
-		{name: "credentials half configured", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"ml307a","username":"agent"}]}`},
 		{name: "invalid url", body: `{"bridges":[{"key":"a","baseUrl":"mqtt://bridge.invalid","profile":"ml307a"}]}`},
 		{name: "no bridges", body: `{"bridges":[]}`},
+		{name: "duplicate key", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"ml307a"},{"key":"a","baseUrl":"http://other.invalid","profile":"ml307a"}]}`},
+		{name: "credentials half configured", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"ml307a","username":"agent"}]}`},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			scanner := hardwareprobe.NewScanner()
-			scanner.Adapters = registry
-			baseline := scanner.Querier
-			err := attachRemoteATBridges(scanner, registry, nil, writeBridgeConfig(t, testCase.body), discardLogger())
-			if err == nil {
-				t.Fatal("attachRemoteATBridges accepted an unusable configuration")
-			}
-			if scanner.ExtraDevices != nil {
-				t.Fatal("failed assembly left a contributed device source behind")
-			}
-			if scanner.Querier != baseline {
-				t.Fatal("failed assembly replaced the AT querier")
+			if _, err := planATTransport(writeBridgeConfig(t, testCase.body)); err == nil {
+				t.Fatal("planATTransport accepted an unusable configuration")
 			}
 		})
 	}
 }
 
-func TestAttachRemoteATBridgesRejectsUnsafeConfigurationFile(t *testing.T) {
-	registry := modemadapter.DefaultRegistry()
-	scanner := hardwareprobe.NewScanner()
-	scanner.Adapters = registry
+func TestAttachBridgeDevicesFailsClosedForUnusableProfiles(t *testing.T) {
+	// Use the production-shaped registry: the safe DefaultRegistry holds
+	// discovery-only adapters, which carry no driver-transport declaration.
+	registry, registryErr := modemadapter.NewRegistry(modemadapter.QDC507SMS{}, modemadapter.ML307ASMS{})
+	if registryErr != nil {
+		t.Fatalf("build registry: %v", registryErr)
+	}
+	for _, testCase := range []struct{ name, body string }{
+		{name: "unknown profile", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"unknown"}]}`},
+		{name: "local-only model", body: `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"qdc507"}]}`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			plan, err := planATTransport(writeBridgeConfig(t, testCase.body))
+			if err != nil {
+				t.Fatalf("planATTransport: %v", err)
+			}
+			scanner := hardwareprobe.NewScanner()
+			scanner.Adapters = registry
+			if err := plan.attachBridgeDevices(scanner, registry, discardLogger()); err == nil {
+				t.Fatal("attachBridgeDevices accepted an unusable profile")
+			}
+			if scanner.ExtraDevices != nil {
+				t.Fatal("failed assembly left a contributed device source behind")
+			}
+		})
+	}
+}
+
+func TestPlanATTransportRejectsUnsafeConfigurationFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "remote-at.json")
 	body := `{"bridges":[{"key":"a","baseUrl":"http://bridge.invalid","profile":"ml307a"}]}`
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -104,10 +157,10 @@ func TestAttachRemoteATBridgesRejectsUnsafeConfigurationFile(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatalf("set bridge configuration mode: %v", err)
 	}
-	if err := attachRemoteATBridges(scanner, registry, nil, path, discardLogger()); err == nil {
-		t.Fatal("attachRemoteATBridges accepted a world-readable configuration")
+	if _, err := planATTransport(path); err == nil {
+		t.Fatal("planATTransport accepted a world-readable configuration")
 	}
-	if err := attachRemoteATBridges(scanner, registry, nil, filepath.Join(t.TempDir(), "absent.json"), discardLogger()); err == nil {
-		t.Fatal("attachRemoteATBridges accepted a missing configuration")
+	if _, err := planATTransport(filepath.Join(t.TempDir(), "absent.json")); err == nil {
+		t.Fatal("planATTransport accepted a missing configuration")
 	}
 }
