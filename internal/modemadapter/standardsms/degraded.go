@@ -43,6 +43,9 @@ func decodeFailureReason(err error) string {
 	if err == nil {
 		return degradationPDUStructure
 	}
+	if errors.Is(err, smscodec.ErrUnsupportedAlphabet) {
+		return degradationPDUStructure + "/unsupported-alphabet"
+	}
 	if strings.Contains(err.Error(), "data coding scheme") {
 		return degradationPDUStructure + "/unsupported-coding"
 	}

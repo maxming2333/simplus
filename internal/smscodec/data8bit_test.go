@@ -2,6 +2,7 @@ package smscodec
 
 import (
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -121,3 +122,42 @@ func TestSinglePartHeaderIsNotDecodedAsText(t *testing.T) {
 		t.Fatalf("decoded text = %q; header or alignment octets leaked into the body", text)
 	}
 }
+
+// TestUnknownExtensionCodeBecomesASpace pins 3GPP TS 23.038 section 6.2.1.1: an
+// unrecognized escape sequence is displayed as a space. Failing instead would
+// degrade an otherwise fully readable message over one unknown code.
+func TestUnknownExtensionCodeBecomesASpace(t *testing.T) {
+	// Two septets: ESC (0x1b) then 0x30, which no extension table defines.
+	// Packed little-endian septets 0x1b,0x30 -> 0x1B,0x18.
+	pdu := deliverPDU(t, "00"+"04"+"05"+"81"+"0180F6"+"00"+"00"+"52907090000023"+"02"+"1B18")
+	delivered, err := DecodeDeliverPDU(pdu)
+	if err != nil {
+		t.Fatalf("unknown extension code was rejected: %v", err)
+	}
+	text, err := DecodeSegment(delivered.Segment)
+	if err != nil {
+		t.Fatalf("DecodeSegment: %v", err)
+	}
+	if text != " " {
+		t.Fatalf("decoded text = %q, want a single space", text)
+	}
+}
+
+// TestNationalShiftTableIsRefusedNotMisdecoded covers the alphabets Simplus does
+// not implement. Ignoring the header element would decode with the wrong table
+// and yield plausible but incorrect text, which a reader cannot detect.
+func TestNationalShiftTableIsRefusedNotMisdecoded(t *testing.T) {
+	// UDHI set, UDL 6 septets: a 4-octet UDH (length 3) selecting national
+	// locking shift table 1, three padding bits, then one packed septet.
+	pdu := deliverPDU(t, "00"+"44"+"05"+"81"+"0180F6"+"00"+"00"+"52907090000023"+"06"+"03"+"250101"+"0800")
+	if _, err := DecodeDeliverPDU(pdu); !errorsIs(err, ErrUnsupportedAlphabet) {
+		t.Fatalf("national shift table error = %v, want ErrUnsupportedAlphabet", err)
+	}
+	// Identifier 0 is the default alphabet and must remain decodable.
+	ok := deliverPDU(t, "00"+"44"+"05"+"81"+"0180F6"+"00"+"00"+"52907090000023"+"06"+"03"+"250100"+"0800")
+	if _, err := DecodeDeliverPDU(ok); err != nil {
+		t.Fatalf("default-alphabet shift element was rejected: %v", err)
+	}
+}
+
+func errorsIs(err, target error) bool { return err != nil && errors.Is(err, target) }

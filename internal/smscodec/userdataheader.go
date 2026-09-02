@@ -23,6 +23,7 @@ type userDataHeader struct {
 	hasPorts         bool
 	destinationPort  uint16
 	sourcePort       uint16
+	shiftTable       bool
 }
 
 const (
@@ -30,7 +31,23 @@ const (
 	udhPorts8Bit          = 0x04
 	udhPorts16Bit         = 0x05
 	udhConcatenation16Bit = 0x08
+
+	// National language shift tables (3GPP TS 23.038 Annex A) replace or extend
+	// the default alphabet for Turkish, Spanish, Portuguese and ten Indic
+	// languages. Simplus implements only the default alphabet and its single
+	// extension table.
+	//
+	// These are detected rather than ignored. Ignoring them would silently decode
+	// with the wrong table and produce plausible-looking but incorrect text,
+	// which is worse than an explicit failure: a reader cannot tell it happened.
+	udhNationalSingleShift  = 0x24
+	udhNationalLockingShift = 0x25
 )
+
+// ErrUnsupportedAlphabet reports a segment whose user-data header selects a
+// national language shift table. Callers surface it as an explicit degraded
+// observation instead of presenting mis-decoded text as the message.
+var ErrUnsupportedAlphabet = errors.New("SMS uses an unsupported national language alphabet")
 
 // parseUserDataHeader reads every information element it recognizes and ignores
 // the rest. It fails only on a structurally impossible header, never on an
@@ -72,6 +89,14 @@ func parseUserDataHeader(data []byte) (userDataHeader, error) {
 			}
 			header.hasPorts = true
 			header.destinationPort, header.sourcePort = uint16(element[0]), uint16(element[1])
+		case udhNationalSingleShift, udhNationalLockingShift:
+			if length != 1 {
+				return userDataHeader{}, errors.New("SMS user-data header has an invalid national language element")
+			}
+			// Identifier 0 selects the default alphabet, which needs no table.
+			if element[0] != 0x00 {
+				header.shiftTable = true
+			}
 		case udhPorts16Bit:
 			if length != 4 {
 				return userDataHeader{}, errors.New("SMS user-data header has an invalid 16-bit port element")

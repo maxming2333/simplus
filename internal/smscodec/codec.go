@@ -326,7 +326,12 @@ func decodeGSM7Septets(septets []byte) (string, error) {
 		}
 		character, ok := gsmExtensionRunes[septets[index]]
 		if !ok {
-			return "", fmt.Errorf("unknown GSM7 extension code 0x%02x", septets[index])
+			// 3GPP TS 23.038 section 6.2.1.1: an escape sequence the receiver does
+			// not recognize is displayed as a space. Failing instead is both
+			// non-conformant and harmful — one unknown code would degrade an
+			// otherwise fully readable message.
+			decoded.WriteRune(' ')
+			continue
 		}
 		decoded.WriteRune(character)
 	}

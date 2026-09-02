@@ -202,6 +202,9 @@ func decodeDeliverUserData(encoding Encoding, hasHeader bool, userDataLength int
 		if header.hasPorts {
 			segment.DestinationPort = header.destinationPort
 		}
+		if header.shiftTable && encoding == EncodingGSM7 {
+			return Segment{}, ErrUnsupportedAlphabet
+		}
 	}
 
 	switch encoding {
