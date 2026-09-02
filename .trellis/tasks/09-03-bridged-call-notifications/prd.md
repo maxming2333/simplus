@@ -78,7 +78,7 @@ inferred.
 `observedAt` of zero means the bridge's clock was unsynchronised. The consumer
 falls back to its own receive time and must not record 1970.
 
-### R4 — Lost events are observable, not silent
+### R4 — Lost events are logged, not silent
 
 Lost calls are derived, not reported: the bridge exposes `oldestSequence` and the
 consumer computes `lost = max(0, oldestSequence - (lastSequence + 1))`. A bridge
@@ -86,15 +86,24 @@ cannot count overwrites itself, because it does not know what any consumer has
 read and there may be several; such a count inflates as soon as the ring wraps
 even when every entry was consumed.
 
-A non-zero derived loss means calls really were missed. It becomes:
+A non-zero derived loss gets **one warning log line carrying the count**. That is
+the whole requirement.
 
-1. **A per-Line observable counter.** Monotonic per bridge boot, exposed on the
-   Line view beside its other current observations.
-2. **One operator alert**, raised when the counter advances.
+Rejected: a per-Line observable counter plus an operator alert. Real loss needs
+the consumer to be unable to reach the bridge while more than a ring's worth of
+calls arrive — with a two-second poll that means dozens of calls inside two
+seconds, and the realistic path to it is Simplus being down long enough, which an
+operator already knows about. Building a domain field, storage column, API field
+and alert channel for that is disproportionate.
 
-It must **not** become a synthetic call record: fabricating a call that has no
-number and no time would corrupt the very records this feature exists to
-provide, and would be indistinguishable from a real missed call.
+What is not acceptable is silence. Fixing the bridge's inflating counter removed
+false positives; it did not make real loss impossible. A warning log keeps the
+event discoverable at the cost of three lines, and the same applies to a `bootId`
+change, which also means unread events were lost.
+
+Loss must **not** become a synthetic call record: a record with no number and no
+time is indistinguishable from a real missed call and would corrupt the very data
+this feature exists to produce.
 
 ### R5 — Notification and realtime
 
@@ -113,14 +122,15 @@ Notification service. No new outbound provider protocol.
 | A5 | A replayed poll returning already-seen sequences creates no duplicate record |
 | A6 | An event whose Line cannot be resolved produces no record and no alert |
 | A7 | `observedAt` zero falls back to receive time; no record carries a 1970 timestamp |
-| A8 | A derived loss raises exactly one operator alert per advance and increments the Line counter |
-| A9 | A derived loss never produces a call record |
-| A11 | A wrapped ring whose entries were all consumed derives zero loss, so a busy line raises no false alert |
+| A8 | A derived loss emits exactly one warning log line carrying the count |
+| A9 | A derived loss never produces a call record, and adds no domain, storage or API field |
+| A11 | A wrapped ring whose entries were all consumed derives zero loss, so a busy line logs nothing |
+| A12 | A `bootId` change emits one warning log line stating unread events were lost |
 | A10 | `go test ./...`, `make lint`, `make check-format`, `make check-docs` pass |
 
-## Open decision
+## Resolved decision
 
-Whether the Line counter resets on bridge reboot or accumulates across reboots.
-Resetting matches the bridge's own per-boot counter; accumulating better reflects
-"calls this deployment has lost". Recommend: persist the accumulated total and
-also show the current-boot value, so a reboot cannot hide history.
+Whether lost calls needed a per-Line counter and an operator alert: no. The
+bridge counter's false positives were the actual problem; once loss is derived
+correctly, real loss is rare enough that a warning log is proportionate. The
+counter, its storage, its API field and the alert channel are all out of scope.
