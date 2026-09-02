@@ -76,13 +76,7 @@ func (current *session) Query(ctx context.Context, command string, timeout time.
 	if command == "" || len(command) > maximumCommandLength || strings.ContainsAny(command, "\r\n") {
 		return nil, ErrCommandInvalid
 	}
-	bounded := timeout
-	if bounded < minimumQueryTimeout {
-		bounded = minimumQueryTimeout
-	}
-	if bounded > maximumQueryTimeout {
-		bounded = maximumQueryTimeout
-	}
+	bounded := boundedQueryTimeout(timeout)
 	payload, err := json.Marshal(commandRequest{
 		Session: current.token, Command: command, TimeoutMS: bounded.Milliseconds(),
 	})
@@ -204,6 +198,17 @@ func normalizeLines(raw []string, command string) ([]string, error) {
 		}
 	}
 	return lines, nil
+}
+
+// boundedQueryTimeout clamps a caller timeout into the range the bridge accepts.
+func boundedQueryTimeout(timeout time.Duration) time.Duration {
+	if timeout < minimumQueryTimeout {
+		return minimumQueryTimeout
+	}
+	if timeout > maximumQueryTimeout {
+		return maximumQueryTimeout
+	}
+	return timeout
 }
 
 func safeText(value string, limit int) string {

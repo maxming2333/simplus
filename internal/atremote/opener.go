@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	sessionPath = "/at/session"
-	commandPath = "/at/command"
+	sessionPath  = "/at/session"
+	commandPath  = "/at/command"
+	exchangePath = "/at/exchange"
 
 	defaultRequestTimeout = 20 * time.Second
 	minimumRequestTimeout = time.Second
