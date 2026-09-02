@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 
+	"github.com/leonfox28/simplus/internal/agentapi"
 	"github.com/leonfox28/simplus/internal/atremote"
 	"github.com/leonfox28/simplus/internal/attransport"
 	"github.com/leonfox28/simplus/internal/hardwareprobe"
@@ -18,6 +19,10 @@ import (
 type atTransportPlan struct {
 	opener  attransport.Opener
 	bridges atremote.Config
+	// bridgeOpener is the concrete bridge transport, kept alongside the routing
+	// opener because reading call events is not an AT operation and so is not part
+	// of the transport interface. It is nil when no bridge is configured.
+	bridgeOpener *atremote.Opener
 }
 
 // planATTransport resolves the control transport. With no bridge configuration
@@ -41,8 +46,9 @@ func planATTransport(configPath string) (atTransportPlan, error) {
 		return atTransportPlan{}, err
 	}
 	return atTransportPlan{
-		opener:  atremote.NewRoutingOpener(bridgeOpener, local),
-		bridges: config,
+		opener:       atremote.NewRoutingOpener(bridgeOpener, local),
+		bridges:      config,
+		bridgeOpener: bridgeOpener,
 	}, nil
 }
 
@@ -84,4 +90,14 @@ func (plan atTransportPlan) attachBridgeDevices(
 		}
 	}
 	return nil
+}
+
+// callEventsService composes the bounded call-events read, or returns nil when no
+// bridge is configured. A nil service leaves the route unregistered entirely,
+// which is the correct answer for a deployment that has no event ring to read.
+func (plan atTransportPlan) callEventsService(monitor *agentapi.Monitor, adapters *modemadapter.Registry) *agentapi.CallEventsService {
+	if plan.bridgeOpener == nil {
+		return nil
+	}
+	return agentapi.NewCallEventsService(monitor, newCallEventsBackend(monitor, adapters, plan.bridgeOpener))
 }

@@ -234,6 +234,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	rfService := agentapi.NewRFService(monitor, scanner)
+	// Inbound call notifications are read from the bridge's own ring rather than
+	// asked of the modem, so this composes no gate and no AT session.
+	callEventsService := transportPlan.callEventsService(monitor, registry)
+
 	equipmentIdentityService := agentapi.NewEquipmentIdentityService(monitor, scanner)
 	smsBackend, ok := registry.SMSBackend(monitor, modemadapter.SMSRuntimeDependencies{Gate: scanner.Gate, Resolver: scanner})
 	if !ok {

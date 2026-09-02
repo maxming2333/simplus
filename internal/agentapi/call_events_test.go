@@ -26,9 +26,8 @@ func (backend *stubCallEventsBackend) CallEvents(_ context.Context, request Call
 }
 
 const (
-	callEventsFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	callEventsBootID      = "0f3a1c2b4d5e6f70"
-	callEventsInstanceID  = "01234567-89ab-cdef-0123-456789abcdef"
+	callEventsBootID     = "0f3a1c2b4d5e6f70"
+	callEventsInstanceID = "01234567-89ab-cdef-0123-456789abcdef"
 )
 
 func callEventsMonitor(t *testing.T) (*Monitor, uint64) {
@@ -45,12 +44,10 @@ func callEventsMonitor(t *testing.T) (*Monitor, uint64) {
 
 func callEventsRequest(monitor *Monitor, generation uint64) CallEventsRequest {
 	return CallEventsRequest{
-		AgentInstanceID:                 monitor.InstanceID(),
-		DeviceID:                        "bridge-a",
-		After:                           5,
-		DeviceGeneration:                generation,
-		ExpectedEquipmentFingerprint:    callEventsFingerprint,
-		ExpectedSubscriptionFingerprint: callEventsFingerprint,
+		AgentInstanceID:  monitor.InstanceID(),
+		DeviceID:         "bridge-a",
+		After:            5,
+		DeviceGeneration: generation,
 	}
 }
 
@@ -100,11 +97,8 @@ func TestCallEventsServiceFailsClosedOnStaleAndUnknownTargets(t *testing.T) {
 		"stale device":    func(r *CallEventsRequest) { r.DeviceGeneration = 99 },
 		"zero generation": func(r *CallEventsRequest) { r.DeviceGeneration = 0 },
 		"blank device":    func(r *CallEventsRequest) { r.DeviceID = "   " },
-		"bad equipment":   func(r *CallEventsRequest) { r.ExpectedEquipmentFingerprint = "short" },
-		// Identity is required even though these events come from the bridge's own
-		// memory: its ring outlives a SIM change, so reading without pinning
-		// identity could attribute a call to a subscription that was not present.
-		"missing subscription": func(r *CallEventsRequest) { r.ExpectedSubscriptionFingerprint = "" },
+		"long device":     func(r *CallEventsRequest) { r.DeviceID = strings.Repeat("d", 129) },
+		"blank instance":  func(r *CallEventsRequest) { r.AgentInstanceID = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			request := base
@@ -247,7 +241,6 @@ func TestCallEventsErrorsMapToStableCodes(t *testing.T) {
 		{ErrCallEventsDeviceNotFound, http.StatusNotFound, "CALL_EVENTS_DEVICE_NOT_FOUND"},
 		{ErrCallEventsDeviceStale, http.StatusConflict, "CALL_EVENTS_DEVICE_STALE"},
 		{ErrCallEventsUnsupported, http.StatusUnprocessableEntity, "CALL_EVENTS_UNSUPPORTED"},
-		{ErrCallEventsIdentity, http.StatusConflict, "CALL_EVENTS_IDENTITY_CHANGED"},
 		{ErrCallEventsBackendInvalid, http.StatusServiceUnavailable, "CALL_EVENTS_BACKEND_INVALID"},
 		{errors.New("something else"), http.StatusServiceUnavailable, "CALL_EVENTS_UNAVAILABLE"},
 	} {
@@ -255,11 +248,6 @@ func TestCallEventsErrorsMapToStableCodes(t *testing.T) {
 		if status != tc.status || response.Code != tc.code {
 			t.Errorf("%v mapped to %d/%s, want %d/%s", tc.err, status, response.Code, tc.status, tc.code)
 		}
-	}
-	// A changed identity must not invite a retry at the same cursor: the events
-	// still in the ring arrived under the previous subscription.
-	if _, response := classifyCallEventsError(ErrCallEventsIdentity); response.Retryable {
-		t.Fatal("a changed identity was marked retryable")
 	}
 }
 

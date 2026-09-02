@@ -48,11 +48,6 @@ func classifyCallEventsError(err error) (int, ErrorResponse) {
 		return http.StatusConflict, ErrorResponse{Code: "CALL_EVENTS_DEVICE_STALE", Detail: "call events device generation changed", Retryable: true}
 	case errors.Is(err, ErrCallEventsUnsupported):
 		return http.StatusUnprocessableEntity, ErrorResponse{Code: "CALL_EVENTS_UNSUPPORTED", Detail: "call events are unsupported for this device"}
-	case errors.Is(err, ErrCallEventsIdentity):
-		// A changed identity is not retryable at this cursor: the events still in
-		// the bridge's ring arrived under the previous subscription, and attributing
-		// them to the current one would invent history.
-		return http.StatusConflict, ErrorResponse{Code: "CALL_EVENTS_IDENTITY_CHANGED", Detail: "call events identity changed"}
 	case errors.Is(err, ErrCallEventsBackendInvalid):
 		return http.StatusServiceUnavailable, ErrorResponse{Code: "CALL_EVENTS_BACKEND_INVALID", Detail: "call events backend returned an invalid report", Retryable: true}
 	default:

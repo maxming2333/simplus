@@ -34,7 +34,6 @@ var (
 	ErrCallEventsDeviceStale    = errors.New("Agent call events device generation changed")
 	ErrCallEventsUnsupported    = errors.New("Agent call events are unsupported for this device")
 	ErrCallEventsUnavailable    = errors.New("Agent call events are unavailable")
-	ErrCallEventsIdentity       = errors.New("Agent call events identity changed")
 	ErrCallEventsBackendInvalid = errors.New("Agent call events backend returned an invalid report")
 )
 
@@ -45,18 +44,21 @@ type CallEventsRequest struct {
 	// After is the consumer's cursor. Only events with a strictly greater
 	// sequence are returned. It is only meaningful together with the BootID the
 	// consumer last saw, which is why the reply always carries one.
-	After            uint32 `json:"after"`
+	After uint32 `json:"after"`
+	// DeviceGeneration fences re-enumeration: a device that came back as a
+	// different generation is not the one whose ring this cursor describes.
 	DeviceGeneration uint64 `json:"deviceGeneration"`
-	// The identity expectations are required for the same reason the message
-	// operations require them, even though these events come from the bridge's
-	// memory rather than the SIM. The call arrived on a radio belonging to
-	// whichever subscription was present at the time; the bridge's ring outlives a
-	// SIM change, so reading it without pinning identity could attribute a call to
-	// a subscription that was not there when it arrived. That would corrupt exactly
-	// the data this operation exists to produce.
-	ExpectedEquipmentFingerprint    string `json:"expectedEquipmentFingerprint"`
-	ExpectedSubscriptionFingerprint string `json:"expectedSubscriptionFingerprint"`
 }
+
+// Subscription identity is deliberately not fenced here, unlike the message
+// operations. Verifying it requires a live probe of the SIM, which takes the
+// modem's operation gate — and a notification read that can queue behind or block
+// a message being sent defeats its own purpose. So the fence lives one layer up,
+// where it costs nothing: the reply carries the bridge's boot identifier, and the
+// consumer records its cursor against both that and the subscription it attributed
+// the previous events to. A change in either means the events still in the ring did
+// not arrive under the current subscription, and the consumer skips rather than
+// misattributes them.
 
 // CallEvent is one observed inbound call.
 type CallEvent struct {
@@ -161,9 +163,7 @@ func (service *CallEventsService) Read(ctx context.Context, request CallEventsRe
 func validateCallEventsRequest(request CallEventsRequest) error {
 	if !IsValidAgentInstanceID(request.AgentInstanceID) ||
 		strings.TrimSpace(request.DeviceID) == "" || len(request.DeviceID) > 128 ||
-		request.DeviceGeneration == 0 ||
-		!isSHA256Hex(request.ExpectedEquipmentFingerprint) ||
-		!isSHA256Hex(request.ExpectedSubscriptionFingerprint) {
+		request.DeviceGeneration == 0 {
 		return ErrCallEventsRequestInvalid
 	}
 	return nil
