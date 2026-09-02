@@ -36,8 +36,8 @@
 | 经真实桥固件的只读综合探测（型号/IMEI 指纹、SIM present+ready、SIM 身份指纹与归属 MCC-MNC、CSQ、三域注册状态） | HIL-0 |
 | 经真实桥固件的逻辑通道粘性序列（通道打开 → APDU 交换 → 关闭，关闭后通道可重新分配） | HIL-0 |
 | 提示符类命令（命令 → `>` → 载荷 → 终止状态）经桥的原子交换，含「载荷未发出」与「结果不确定」的状态分类 | HIL-0 |
-| ML307A 蜂窝短信入站链路（PDU 模式、存储选择、存储列举）经桥由生产 SMS driver 驱动 | HIL-0 |
-| ML307A 蜂窝短信出站提交（`AT+CMGS`） | 尚未验证（需已驻网的 SIM） |
+| ML307A 蜂窝短信完整回环经桥：出站提交 → 存储投递 → 列举 → PDU 读取 → ack 删除 | HIL |
+| 多条消息共存时的列举与按索引读取/删除 | HIL |
 | 一次操作复用一个桥会话（列举/读取/删除/多段提交），独占窗口为操作级 | Fixture + HIL-0 |
 | 桥固件胖/瘦模式切换真实改变模组上报设置 | HIL-0 |
 
@@ -45,9 +45,16 @@ HIL-0 证据取自一枚 ML307A-DSLN-MTSH1S00 与一台参考 ESP32 桥固件，
 
 入站短信的消费归属由桥固件的胖/瘦模式决定，二者互斥。胖模式（默认）下新短信直投桥固件、不进模组存储，因此 Simplus 的存储列举永远为空；只有瘦模式才把短信留在存储里交给 Simplus。误判这一点会表现为「Simplus 收不到短信」但两侧日志都正常，细节见 [`remote-at-bridge.md`](remote-at-bridge.md)。
 
-ML307A 蜂窝短信：通用 3GPP TS 27.005 PDU 模式 driver、durable recovery store 与提交/确认状态机由 `internal/modemadapter/standardsms` 与首个通过蜂窝短信 HIL 的型号共用，共用代码不等于共用证据——ML307A 自身的 `sms-control` 保持 `unverified`，因此 `internal/application/inventory` 不会为该型号声明短信能力。要提升为 `observed`，需要一张已驻网的 SIM 完成真实收发 HIL 并记录在本文。
+ML307A 蜂窝短信已通过自身 HIL 并提升为 `observed`：一张已驻网的指定 SIM（LTE，`+CEREG` stat=1）经桥完成一次完整自号码回环——出站 submit-prompt 提交拿到 `+CMGS` 参考号，入站约 1 秒落入 SIM 存储，列举后按索引读取且解码正文与唯一标记完全一致，ack 后该索引从存储中消失，其余待处理消息不受影响。测试为 opt-in 且需两个环境变量（配置 + 本机号码），是本仓库唯一有外部副作用的 HIL。
 
-尚未验证的部分包括：ML307A 真实蜂窝短信收发（入站投递与出站提交）、长时间会话稳定性、桥重启或掉线后的恢复行为、经桥完成的完整 SIM AKA 鉴权与 Host VoWiFi 接入、经桥的短信收发、多桥并发。
+通用 3GPP PDU 模式 driver、durable recovery store 与提交/确认状态机由
+`internal/modemadapter/standardsms` 与首个通过蜂窝短信 HIL 的型号共用；共用代码不等于共用证据，上述提升依据的是 ML307A 自己的这次验收。桥设备另有独立的证据策略：未经运营者显式背书时，桥上所有 `observed` 一律降级，因此本次提升本身不会让一台桥接模组变为可操作。
+
+**已知未闭环的可靠性问题**：同一回环在 5 次尝试中有 2 次以「AT 转录非法」被拒。已确认的一个成因是模组自身重启后发出的 `+MATREADY` 上报——桥固件此前不识别它，会把它并入某条在途命令的响应并使其解析失败（实测 `AT+CPMS?` 返回 `+MATREADY` + `+CPMS: ...`）。桥固件已修复该前缀识别并在检测到模组重启后重新下发模组配置（`CNMI`/`CMGF`/`CGDCONT` 都不写入模组 NVM），但**尚未在真机上复验**。是否还有第二个成因未确定。上层行为是 fail-closed 的（拒绝无法解析的转录、不猜测），因此该问题表现为一次同步周期被跳过，不会造成消息丢失或重复。
+
+入站发件人可能是国内格式（3GPP TS 23.040 type-of-number 2，不含国家码），`internal/smscodec` 按规范不为其补 `+`。这意味着同一对端的国内格式与国际格式会落在不同的会话键上；这是既有行为，非本次改动引入。
+
+尚未验证的部分包括：上述转录被拒问题的完整根因与修复后复验、其他收件人的互通、长时间会话稳定性、桥重启或掉线后的恢复行为、经桥完成的完整 SIM AKA 鉴权与 Host VoWiFi 接入、经桥的短信收发、多桥并发。
 
 能力证据规则：型号 adapter 的 `observed` 来自本机直连模组的受控 HIL，不迁移到第三方桥。默认策略把桥设备上所有 `observed` 降级为 `unverified`，因此桥设备只作为物理设备出现，不产生 modem function、SIM 卡槽或 Line，SIM 鉴权返回 `SIM_AKA_UNSUPPORTED`；探测不受影响。配置项 `attestCapabilities` 保留 adapter 状态并在证据文本中标注 operator-attested，这是运维背书而非验证证据，属于记录在案的显式例外。契约细节见 [`remote-at-bridge.md`](remote-at-bridge.md)。
 

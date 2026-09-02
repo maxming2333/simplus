@@ -34,11 +34,17 @@ func (ML307ASMS) Matches(descriptor USBDescriptor) bool { return ML307A{}.Matche
 //
 // The command set is standard 3GPP TS 27.005 and its Go implementation is shared
 // with the model that already passed cellular SMS HIL, but shared code is not
-// shared evidence: the ML307A's own inbound/outbound behaviour on a real network
-// has not been accepted yet. sms-control therefore stays unverified, which keeps
-// internal/application/inventory from advertising SMS for this model. Promote it
-// only when ML307A cellular SMS HIL is actually recorded in
-// docs/compatibility.md.
+// shared evidence. This model's own promotion rests on its own accepted HIL: a
+// designated registered SIM completed one full loopback through the composed
+// adapter — outbound submit-prompt submission, inbound storage delivery,
+// listing, PDU read with a matching unique body, and acknowledgement that
+// removed the message from storage.
+//
+// That HIL ran over a bridged control endpoint, so the evidence text says so.
+// A bridged device additionally has its own evidence policy in
+// internal/hardwareprobe: without an explicit operator attestation every
+// observed status there is downgraded, so this promotion does not by itself make
+// a bridged modem operable.
 func (adapter ML307ASMS) Capabilities(device agentapi.DeviceReport) []agentapi.CapabilityEvidence {
 	capabilities := ML307A{}.Capabilities(device)
 	for index := range capabilities {
@@ -46,9 +52,9 @@ func (adapter ML307ASMS) Capabilities(device agentapi.DeviceReport) []agentapi.C
 			continue
 		}
 		if hasEndpoint(device, agentapi.EndpointTTY, 2) {
-			capabilities[index].Status = agentapi.EvidenceUnverified
+			capabilities[index].Status = agentapi.EvidenceObserved
 			capabilities[index].Evidence = []string{
-				"standard 3GPP PDU-mode SMS driver is composed and fixture-verified; on-network cellular SMS HIL is pending",
+				"designated-SIM cellular SMS loopback accepted: submit-prompt submission, storage delivery, PDU read and acknowledged deletion",
 			}
 		}
 		break
